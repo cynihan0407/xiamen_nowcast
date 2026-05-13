@@ -121,7 +121,35 @@ bash scripts/push_to_server.sh --no-pull "msg"                   # 仅 push
 bash scripts/push_to_server.sh --dry-run "msg"                   # 只打印不执行
 ```
 
-## 6. 引用
+### 5.4 模块路径说明
+
+数据相关代码在 **`src/data/`** 包内（例如 `src/data/normalizers.py`、`src/data/h8_dataset.py`），**不在** `src/` 根目录。导入形式为：
+
+```python
+from src.data.normalizers import kelvin_to_norm
+from src.data.h8_dataset import H8Dataset
+```
+
+### 5.5 pytest 收集阶段报错（服务器缺 `src/data`）
+
+若出现 `ModuleNotFoundError: No module named 'src.data'` 或收集阶段 3 个 ERROR，常见原因是 **`.gitignore` 里曾使用 `data/`**，Git 会误忽略 **`src/data/`** 整个源码目录，导致 push 后服务器仓库里没有这些文件。
+
+**处理：**
+
+1. 拉取已修复的 `.gitignore`（规则改为仅忽略仓库根目录的 `/data/`）。
+2. 在仓库根目录执行：
+
+```bash
+git check-ignore -v src/data/normalizers.py   # 应无输出（表示不再被忽略）
+git add -f src/data/
+git status                                      # 应能看到若干 .py 被纳入暂存
+git commit -m "fix: track src/data Python package (was ignored by data/)"
+git push
+```
+
+3. 服务器 `git pull` 后确认：`ls src/data` 应列出 `normalizers.py`、`h8_dataset.py` 等。
+
+## 7. 引用
 
 如使用本仓库代码或方法，请引用（占位，待论文发表后补充）：
 

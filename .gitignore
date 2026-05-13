@@ -40,8 +40,9 @@ ckpt/
 *.pth
 *.safetensors
 
-data/
-data_cache/
+# 仅忽略仓库根目录下的数据目录，勿写成 ``data/``，否则会误伤 ``src/data/`` 源码包
+/data/
+/data_cache/
 problematic_checkpoints*.csv
 *.npz
 *.h5
