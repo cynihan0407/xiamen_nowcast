@@ -1,0 +1,24 @@
+# 评估配置占位
+tag: nowcast_eval
+
+# 推理参数
+inference:
+  num_steps: 18
+  ensemble_size: 1           # 第一阶段先确定性评估，后期开 ensemble_size=50
+  use_ema: true
+  guidance_scale: null       # 物理引导，二期再开
+
+# 指标
+metrics:
+  pixelwise:
+    enable: true
+  meteorological:
+    enable: true
+    thresholds_K: [240, 230, 220, 210]
+    fss_radii_km: [8, 16, 32]
+  probabilistic:
+    enable: false            # 待集合预报上线后启用
+  lifecycle:
+    enable: true
+    detect_threshold_K: 235
+    min_object_pixels: 25

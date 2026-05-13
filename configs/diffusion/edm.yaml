@@ -1,0 +1,20 @@
+# EDM (Karras et al., NeurIPS 2022) 配方占位。
+# 第二批文件（src/models/diffusion/edm.py）落地后启用。
+_target_: src.models.diffusion.edm.EDMDiffusion
+
+# === 训练时 sigma 分布 (log-normal) ===========================================
+sigma_data: 0.5            # 数据标准差先验（latent 标准化后近似 0.5）
+P_mean: -1.2
+P_std:  1.2
+
+# === 网络预条件（preconditioning）参数 ========================================
+sigma_min: 0.002
+sigma_max: 80.0
+rho: 7.0                   # Heun 采样的 sigma schedule 形状参数
+
+# === 推理 ====================================================================
+num_steps: 18              # 默认 18 步 Heun，速度/质量折中
+S_churn: 0.0               # 0 = 纯 ODE；增大引入随机性
+S_min: 0.0
+S_max: .inf
+S_noise: 1.0

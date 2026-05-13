@@ -1,0 +1,35 @@
+# 顶层配置：被 Hydra 在运行时合成。各子项可通过命令行覆盖：
+#   python scripts/train_diffusion.py data=h8_v7 model=unet3d_base train=stage_b
+defaults:
+  - data: h8_v7
+  - model: unet3d_small
+  - diffusion: edm
+  - train: stage_b
+  - eval: nowcast
+  - _self_
+
+project_name: xiamen_nowcast
+seed: 2025
+deterministic: true
+matmul_precision: high          # PyTorch 2.x 推荐：tf32 高精度档
+
+paths:
+  root: ${oc.env:XN_ROOT,${hydra:runtime.cwd}}
+  output_dir: ${paths.root}/outputs/${project_name}/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  ckpt_dir: ${paths.output_dir}/checkpoints
+  log_dir: ${paths.output_dir}/logs
+
+logger:
+  wandb:
+    project: ${project_name}
+    name: ${now:%Y%m%d-%H%M%S}-${train.tag}
+    mode: online                # online | offline | disabled
+    save_dir: ${paths.log_dir}
+    tags: []
+
+# Hydra 自身行为
+hydra:
+  run:
+    dir: ${paths.output_dir}
+  job:
+    chdir: false
