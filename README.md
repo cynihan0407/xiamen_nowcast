@@ -15,6 +15,7 @@
   - `B09: [190, 270] K`
   - `B10: [190, 280] K`
   - `B13: [180, 310] K`
+H8 V7 audit passed: 6173 sequences, 0 load failures, 1 problematic sequence (0.02%), B13 valid ratio mean=1.0000, non-flood-season share=0.00%.
 
 ## 2. 技术路线（v1.1）
 
