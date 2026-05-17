@@ -1,0 +1,83 @@
+# Himawari-8 数据切片 V7（与 prod_v7_ultimate.py 对齐）
+_target_: src.data.h8_dataset.H8DataModule
+
+# === 数据路径 =================================================================
+# 注意：可通过环境变量 XN_DATA_ROOT 全局覆盖
+roots:
+  train: ${oc.env:XN_TRAIN_DIR,/share/home/sera_hujun/train_data_v7_unbiased_501}
+  val:   ${oc.env:XN_VAL_DIR,/share/home/sera_hujun/val_data_v7_unbiased_501}
+  test:  ${oc.env:XN_TEST_DIR,/share/home/sera_hujun/test_data_v7_unbiased_501}
+
+blacklist_path: ${oc.env:XN_BLACKLIST,problematic_checkpoints.csv}
+
+# === 序列结构 =================================================================
+past_len: 6                  # 输入：过去 1 小时
+future_len: 12               # 预测：未来 2 小时
+seq_len: 18                  # past_len + future_len
+n_channels: 4                # B08 / B09 / B10 / B13
+
+# === 物理归一化（与 prod_v7 完全一致）========================================
+norm_limits:
+  B08: [190, 260]
+  B09: [190, 270]
+  B10: [190, 280]
+  B13: [180, 310]
+band_order: [B08, B09, B10, B13]
+
+# === 空间裁剪 =================================================================
+# 训练阶段使用随机裁剪，验证/测试使用中心裁剪（可复现）
+# 设为 null 表示使用完整 501x501（VAE 阶段建议如此；扩散阶段建议 256/384）
+spatial:
+  full_size: 501
+  crop_size: 256             # 训练阶段裁剪窗口
+  eval_crop_size: null       # 评估保持完整 501x501
+  random_crop_train: true
+  center_crop_eval: true
+
+# === 几何增强（仅 train，且仅几何变换；禁色彩抖动）===========================
+augmentation:
+  enable: true
+  flip_horizontal: true
+  flip_vertical: true
+  rot90:
+    p: 0.5
+    choices: [0, 1, 2, 3]    # 0/90/180/270 度
+
+# === 加权采样（按 月份 × 对流强度 分桶）=======================================
+sampler:
+  enable: true
+  # 对流强度按 B13 最低值（norm 域 [-1, 1]）分桶；越冷 = 强度越高
+  # B13 物理范围 [180, 310] K → norm 阈值：
+  #   200 K → -0.6923 (极深对流)
+  #   220 K → -0.3846 (强对流)
+  #   240 K → -0.0769 (普通活跃对流)
+  #   262 K →  0.2615 (prod_v7 的活跃判据)
+  intensity_bins:
+    deep:    {b13_norm_min_lt: -0.6923}      # 极深对流 < 200 K
+    strong:  {b13_norm_min_lt: -0.3846}      # 强对流  < 220 K
+    active:  {b13_norm_min_lt: -0.0769}      # 普通活跃 < 240 K
+    weak:    {b13_norm_min_lt: 1.0}          # 兜底（弱对流 / 晴空）
+  # 各桶相对采样权重（抑制晴空主导）
+  bin_weights:
+    deep:    5.0
+    strong:  3.0
+    active:  2.0
+    weak:    1.0
+  # 缓存预扫描结果
+  cache_scan: true
+  cache_path: ${paths.root}/data_cache/sampler_scan_v7.parquet
+
+# === DataLoader ===============================================================
+loader:
+  batch_size: 4              # 训练（latent 扩散后可上调）
+  eval_batch_size: 2
+  num_workers: 8
+  pin_memory: true
+  persistent_workers: true
+  prefetch_factor: 4
+  drop_last: true            # 训练 drop_last，评估保留尾批
+
+# === 数据集类型 ===============================================================
+# raw  : 返回亮温归一化序列（用于 VAE 训练 + 数据审计）
+# split: 返回 (past, future) 两段，用于扩散主干训练
+mode: split

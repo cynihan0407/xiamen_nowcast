@@ -1,0 +1,26 @@
+# Stage-A：时空 VAE 预训练
+tag: stage_a_stvae
+
+epochs: 80
+lr: 1.0e-4
+weight_decay: 1.0e-6
+kl_weight: 1.0e-6
+b13_weight: 2.0
+csi_threshold_K: 240.0
+
+# Lightning Trainer
+trainer:
+  max_epochs: ${train.epochs}
+  accelerator: gpu
+  devices: 1
+  precision: bf16-mixed
+  gradient_clip_val: 1.0
+  log_every_n_steps: 50
+  check_val_every_n_epoch: 1
+
+checkpoint:
+  monitor: val/loss
+  mode: min
+  save_top_k: 2
+  save_last: true
+  filename: stvae-{epoch:02d}-{val_loss:.4f}

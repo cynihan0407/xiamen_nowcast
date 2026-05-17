@@ -1,0 +1,28 @@
+# Stage-A 训练入口：组合 data + model + train
+defaults:
+  - data: h8_v7
+  - model: stvae
+  - train: stage_a
+  - _self_
+
+seed: 2025
+
+# 覆盖 data：VAE 需要完整 18 帧序列 + 空间裁剪到 256（显存友好）
+data:
+  mode: raw
+  spatial:
+    crop_size: 256
+    eval_crop_size: 256
+    random_crop_train: true
+    center_crop_eval: true
+  loader:
+    batch_size: 2
+    eval_batch_size: 2
+    num_workers: 4
+    drop_last: true
+
+hydra:
+  run:
+    dir: ${oc.env:XN_ROOT,${hydra:runtime.cwd}}/outputs/stvae/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  job:
+    chdir: false

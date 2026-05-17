@@ -1,0 +1,8 @@
+# 时空 VAE 网络（Hydra instantiate）
+_target_: src.models.vae.stvae.STVAE
+
+in_channels: 4
+latent_channels: 8
+base_channels: 32
+num_down: 4
+seq_len: 18

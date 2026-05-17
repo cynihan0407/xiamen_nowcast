@@ -21,7 +21,7 @@
 | 模块 | 选型 |
 |---|---|
 | 工程 | PyTorch Lightning + Hydra + WandB（DeepSpeed ZeRO-2 / FSDP） |
-| 表示 | Stage-A 时空 VAE，将 `[18,4,501,501]` 压缩到 `[18,8,64,64]` 量级的 latent |
+| 表示 | Stage-A 时空 VAE：将 ``[T,4,H,W]`` 序列（如 crop 256）编码到 latent（默认 ``latent_ch=8``，空间 ``H/16``） |
 | 主干 | **3D U-Net (Spatiotemporal U-Net)**：(2+1)D ResBlock + factorized spatial/temporal attention |
 | 扩散 | **EDM (Karras 2022)** 主线；DDPM / Flow Matching 作为消融 |
 | 条件 | 过去 6 帧 latent 沿通道维 concat + AdaGN 注入 σ / 时刻嵌入 |
@@ -73,26 +73,40 @@ export XN_VAL_DIR=/share/home/sera_hujun/val_data_v7_unbiased_501
 export XN_TEST_DIR=/share/home/sera_hujun/test_data_v7_unbiased_501
 export XN_BLACKLIST=$PWD/problematic_checkpoints.csv
 
-pytest tests/ -q        # 期望 29 passed
+pytest tests/ -q        # 期望全部通过（含 STVAE / CSI / 基线模块）
 ```
 
-### 5.2 日常迭代
+### 5.2 基线 notebook（P0 后半）
 
 ```bash
-# 数据审计（先跑这个，输出新版黑名单）
-jupyter lab notebooks/01_data_audit.ipynb
-
-# 训练时空 VAE（Stage-A）
-python scripts/train_stvae.py +train=stage_a
-
-# 训练 3D U-Net 扩散（Stage-B）
-python scripts/train_diffusion.py +train=stage_b
-
-# 评估
-python scripts/evaluate.py +eval=nowcast ckpt_path=...
+jupyter lab notebooks/02_baselines.ipynb
 ```
 
-### 5.3 本地↔服务器同步（git 工作流）
+产出 CSV 默认在 `reports/baselines/`。若需重新生成 ipynb（开发用）：`python scripts/gen_02_baselines_nb.py`。
+
+### 5.3 Stage-A 时空 VAE 训练
+
+在仓库根目录、已 `pip install -e ".[dev]"`（含 `hydra-core`、`pytorch-lightning`）：
+
+```bash
+python scripts/train_stvae.py
+# 覆盖示例：
+python scripts/train_stvae.py train.epochs=10 data.loader.batch_size=1
+```
+
+Hydra 主配置为 `configs/train_stvae.yaml`；日志与 checkpoint 在 `outputs/stvae/日期时间/` 下。验证集监控 `val/loss` 与 `val/csi_b13_240K`（重建场与真值逐帧 CSI）。
+
+### 5.4 其他脚本（占位）
+
+```bash
+# 训练 3D U-Net 扩散（Stage-B，脚本待补齐）
+# python scripts/train_diffusion.py +train=stage_b
+
+# 评估（待补齐）
+# python scripts/evaluate.py +eval=nowcast ckpt_path=...
+```
+
+### 5.5 本地↔服务器同步（git 工作流）
 
 首次：在本地仓库根目录执行
 
@@ -121,7 +135,7 @@ bash scripts/push_to_server.sh --no-pull "msg"                   # 仅 push
 bash scripts/push_to_server.sh --dry-run "msg"                   # 只打印不执行
 ```
 
-### 5.4 模块路径说明
+### 5.6 模块路径说明
 
 数据相关代码在 **`src/data/`** 包内（例如 `src/data/normalizers.py`、`src/data/h8_dataset.py`），**不在** `src/` 根目录。导入形式为：
 
@@ -130,7 +144,7 @@ from src.data.normalizers import kelvin_to_norm
 from src.data.h8_dataset import H8Dataset
 ```
 
-### 5.5 pytest 收集阶段报错（服务器缺 `src/data`）
+### 5.7 pytest 收集阶段报错（服务器缺 `src/data`）
 
 若出现 `ModuleNotFoundError: No module named 'src.data'` 或收集阶段 3 个 ERROR，常见原因是 **`.gitignore` 里曾使用 `data/`**，Git 会误忽略 **`src/data/`** 整个源码目录，导致 push 后服务器仓库里没有这些文件。
 
@@ -149,7 +163,7 @@ git push
 
 3. 服务器 `git pull` 后确认：`ls src/data` 应列出 `normalizers.py`、`h8_dataset.py` 等。
 
-## 7. 引用
+## 6. 引用
 
 如使用本仓库代码或方法，请引用（占位，待论文发表后补充）：
 
