@@ -7,9 +7,15 @@ defaults:
 
 seed: 2025
 
+# 与 configs/config.yaml 对齐；h8_v7.yaml 中 sampler.cache_path 依赖 paths.root
+paths:
+  root: ${oc.env:XN_ROOT,${hydra:runtime.cwd}}
+
 # 覆盖 data：VAE 需要完整 18 帧序列 + 空间裁剪到 256（显存友好）
 data:
   mode: raw
+  sampler:
+    enable: false              # VAE 阶段用 shuffle 即可，避免预扫描与 paths 依赖
   spatial:
     crop_size: 256
     eval_crop_size: 256

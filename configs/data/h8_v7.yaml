@@ -65,7 +65,7 @@ sampler:
     weak:    1.0
   # 缓存预扫描结果
   cache_scan: true
-  cache_path: ${paths.root}/data_cache/sampler_scan_v7.parquet
+  cache_path: ${oc.env:XN_ROOT,${hydra:runtime.cwd}}/data_cache/sampler_scan_v7.parquet
 
 # === DataLoader ===============================================================
 loader:
