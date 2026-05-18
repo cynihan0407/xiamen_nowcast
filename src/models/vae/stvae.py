@@ -22,6 +22,14 @@ def _same_hw(h: int, w: int) -> bool:
     return h
 
 
+def _pick_groups(channels: int, max_groups: int = 32) -> int:
+    """选择能整除 ``channels`` 的最大 ``num_groups``（≤ max_groups）。"""
+    for g in (max_groups, 16, 8, 4, 2, 1):
+        if g <= channels and channels % g == 0:
+            return g
+    return 1
+
+
 @dataclass
 class STVAEConfig:
     in_channels: int = 4
@@ -54,7 +62,7 @@ class STVAE(nn.Module):
             enc_layers.append(
                 nn.Sequential(
                     nn.Conv3d(cin, cout, kernel_size=(1, 4, 4), stride=(1, 2, 2), padding=(0, 1, 1)),
-                    nn.GroupNorm(min(32, cout), cout),
+                    nn.GroupNorm(_pick_groups(cout), cout),
                     nn.SiLU(),
                 )
             )
@@ -72,7 +80,7 @@ class STVAE(nn.Module):
                     nn.ConvTranspose3d(
                         cin, cout, kernel_size=(1, 4, 4), stride=(1, 2, 2), padding=(0, 1, 1), output_padding=(0, 0, 0)
                     ),
-                    nn.GroupNorm(min(32, cout), cout),
+                    nn.GroupNorm(_pick_groups(cout), cout),
                     nn.SiLU(),
                 )
             )
