@@ -1,0 +1,8 @@
+键	                                       含义
+MAE_B13_K / RMSE_B13_K              未来 12 帧 B13 开尔文误差
+CSI_B13_240K_global                 全像素汇总 CSI（micro）
+CSI_B13_240K_mean_per_sample        先逐帧 CSI 再对样本平均（与 02_baselines 一致）
+CSI_B13_230K_global 等              其他阈值
+persistence.*                       同期 Persistence 对照
+
+Stage-B 验收主要看 CSI_B13_240K_mean_per_sample 或 _global ≥ 0.60，并应高于 persistence 中同名字段。
