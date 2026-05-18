@@ -16,6 +16,15 @@ def test_stvae_forward_256():
     assert mu.shape[1] == 8
 
 
+def test_stvae_large_base_channels_48():
+    """P1-B 配置：base_channels=48 时 GroupNorm 须可整除。"""
+    m = STVAE(STVAEConfig(base_channels=48, latent_channels=12))
+    x = torch.randn(1, 4, 18, 256, 256)
+    r, mu, lv = m(x)
+    assert r.shape == x.shape
+    assert mu.shape[1] == 12
+
+
 def test_vae_loss_finite():
     m = STVAE(STVAEConfig())
     x = torch.randn(2, 4, 18, 256, 256)
