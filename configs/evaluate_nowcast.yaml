@@ -1,0 +1,56 @@
+# 临近预报评估入口
+defaults:
+  - data: h8_v7
+  - model: unet3d_small
+  - diffusion: edm
+  - eval: nowcast
+  - _self_
+
+seed: 2025
+
+# 必填 checkpoint
+stvae_ckpt_path: null
+diffusion_ckpt_path: null
+
+# STVAE 结构（须与 Stage-A 训练一致）
+stvae:
+  _target_: src.models.vae.stvae.STVAE
+  in_channels: 4
+  latent_channels: 8
+  base_channels: 32
+  num_down: 4
+  seq_len: 18
+
+# 评估 split：test | val
+split: test
+max_batches: null          # null = 全量；冒烟可设 10
+device: cuda
+
+# 输出
+output_dir: ${oc.env:XN_ROOT,${hydra:runtime.cwd}}/reports/eval/${now:%Y-%m-%d_%H-%M-%S}
+save_json: true
+compare_persistence: true  # 同时评估 Persistence 基线
+
+paths:
+  root: ${oc.env:XN_ROOT,${hydra:runtime.cwd}}
+
+data:
+  mode: split
+  sampler:
+    enable: false
+  spatial:
+    crop_size: 256
+    eval_crop_size: 256
+    random_crop_train: true
+    center_crop_eval: true
+  loader:
+    batch_size: 2
+    eval_batch_size: 2
+    num_workers: 4
+    drop_last: false
+
+hydra:
+  run:
+    dir: ${output_dir}
+  job:
+    chdir: false

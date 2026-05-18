@@ -1,16 +1,14 @@
-# 3D U-Net 主干（小模型，用于打通流程 / 消融）
-# 第二批文件（src/models/unet3d/unet3d.py）落地后启用
+# 3D U-Net 主干（small，用于冒烟与 ablation）
 _target_: src.models.unet3d.unet3d.UNet3D
 
-in_channels: 16          # latent C_z(=8) + past concat C_z(=8)
+in_channels: 16          # latent C_z(=8) + cond C_z(=8)
 out_channels: 8          # latent C_z
-base_channels: 96
-channel_mult: [1, 2, 4, 4]
+base_channels: 64
+channel_mult: [1, 2, 2, 4]
 num_res_blocks: 2
 attn_resolutions: [16, 8]
-time_embed_dim: 384
+time_embed_dim: 256
 dropout: 0.0
-conv_type: "(2+1)d"      # (2+1)d | pseudo3d | full3d
-attention:
-  spatial: true
-  temporal: true
+num_heads: 4
+attention_spatial: true
+attention_temporal: true

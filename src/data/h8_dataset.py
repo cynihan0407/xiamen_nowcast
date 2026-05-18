@@ -73,6 +73,33 @@ class SeqMeta:
         )
 
 
+def discover_npz_files(data_dir: str | os.PathLike, *, recursive: bool = False) -> list[str]:
+    """枚举数据目录下的 ``seq_18F_*.npz``（默认仅顶层，可选递归子目录）。"""
+    root = Path(data_dir)
+    if not root.is_dir():
+        return []
+    if recursive:
+        return sorted(str(p) for p in root.rglob("*.npz"))
+    return sorted(glob.glob(str(root / "*.npz")))
+
+
+def _raise_no_npz_error(data_dir: str) -> None:
+    root = Path(data_dir)
+    exists = root.is_dir()
+    flat = len(glob.glob(str(root / "*.npz"))) if exists else 0
+    nested = len(list(root.rglob("*.npz"))) if exists else 0
+    raise FileNotFoundError(
+        f"在 {data_dir} 中找不到任何 .npz 文件。\n"
+        f"  目录存在: {exists}\n"
+        f"  顶层 *.npz 数量: {flat}\n"
+        f"  递归 **/*.npz 数量: {nested}\n"
+        "请检查：\n"
+        "  1) 是否 export XN_TRAIN_DIR / XN_VAL_DIR（nohup 不会读 ~/.bashrc 里未 export 的变量）\n"
+        "  2) 或命令行覆盖: data.roots.train=/你的/train路径 data.roots.val=/你的/val路径\n"
+        "  3) 若 .npz 在子目录中，加 data.glob_recursive=true"
+    )
+
+
 def load_blacklist(path: Optional[str | os.PathLike]) -> set[str]:
     """加载 ``problematic_checkpoints.csv``，返回起始时间戳集合。
 
@@ -112,6 +139,7 @@ class H8Dataset(Dataset):
         aug: Optional[SequenceGeometricAug] = None,
         blacklist: Optional[set[str]] = None,
         files: Optional[Sequence[str]] = None,
+        glob_recursive: bool = False,
         dtype: torch.dtype = torch.float32,
     ) -> None:
         super().__init__()
@@ -132,9 +160,11 @@ class H8Dataset(Dataset):
         if files is not None:
             file_list = list(files)
         else:
-            file_list = sorted(glob.glob(os.path.join(self.data_dir, "*.npz")))
+            file_list = discover_npz_files(self.data_dir, recursive=glob_recursive)
+            if len(file_list) == 0 and not glob_recursive:
+                file_list = discover_npz_files(self.data_dir, recursive=True)
         if len(file_list) == 0:
-            raise FileNotFoundError(f"在 {self.data_dir} 中找不到任何 .npz 文件")
+            _raise_no_npz_error(self.data_dir)
 
         # 先解析元信息再过滤黑名单（保留可观测的过滤量）
         metas: list[SeqMeta] = []
@@ -246,6 +276,8 @@ class H8DataModule:
         past_len: int = 6,
         future_len: int = 12,
         n_channels: int = 4,
+        # 以下字段仅写在 Hydra YAML 中作说明，不参与 DataModule 逻辑
+        seq_len: Optional[int] = None,
         norm_limits: Optional[dict[str, tuple[float, float]]] = None,
         band_order: Optional[Sequence[str]] = None,
         spatial: Optional[dict[str, Any]] = None,
@@ -254,15 +286,22 @@ class H8DataModule:
         loader: Optional[dict[str, Any]] = None,
         mode: ReturnMode = "split",
         blacklist_path: Optional[str | os.PathLike] = None,
-        # 注入用于自定义场景（如交叉验证）
         train_sampler: Optional[Sampler[int]] = None,
+        glob_recursive: bool = False,
+        **kwargs: Any,
     ) -> None:
+        if seq_len is not None and int(seq_len) != past_len + future_len:
+            raise ValueError(
+                f"seq_len={seq_len} 与 past_len+future_len={past_len + future_len} 不一致"
+            )
+        if kwargs:
+            # Hydra 可能传入仅用于文档的键，忽略即可
+            pass
         self.roots = roots
         self.past_len = past_len
         self.future_len = future_len
         self.n_channels = n_channels
-        self.norm_limits = norm_limits
-        self.band_order = band_order
+        _ = norm_limits, band_order  # 归一化常量见 src.data.normalizers
         self.spatial = spatial or {}
         self.augmentation = augmentation or {}
         self.sampler_cfg = sampler or {}
@@ -270,6 +309,7 @@ class H8DataModule:
         self.mode: ReturnMode = mode
         self.blacklist_path = blacklist_path
         self.train_sampler = train_sampler
+        self.glob_recursive = bool(glob_recursive)
 
         self._train: Optional[H8Dataset] = None
         self._val: Optional[H8Dataset] = None
@@ -287,6 +327,7 @@ class H8DataModule:
         eval_crop = self._build_crop(train=False)
 
         if stage in (None, "fit"):
+            gr = self.glob_recursive
             self._train = H8Dataset(
                 self.roots["train"],
                 past_len=self.past_len,
@@ -295,6 +336,7 @@ class H8DataModule:
                 crop=train_crop,
                 aug=train_aug,
                 blacklist=self._blacklist,
+                glob_recursive=gr,
             )
             self._val = H8Dataset(
                 self.roots["val"],
@@ -304,6 +346,7 @@ class H8DataModule:
                 crop=eval_crop,
                 aug=eval_aug,
                 blacklist=self._blacklist,
+                glob_recursive=gr,
             )
         if stage in (None, "test", "predict"):
             self._test = H8Dataset(
@@ -314,6 +357,7 @@ class H8DataModule:
                 crop=eval_crop,
                 aug=eval_aug,
                 blacklist=self._blacklist,
+                glob_recursive=self.glob_recursive,
             )
 
     # ------------------------------------------------------------------ helpers

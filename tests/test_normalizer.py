@@ -17,6 +17,7 @@ from src.data.normalizers import (
     b13_norm_threshold_for_kelvin,
     kelvin_to_norm,
     norm_to_kelvin,
+    norm_to_kelvin_np,
 )
 
 
@@ -78,6 +79,14 @@ def test_normalizer_channel_check():
     bad = torch.zeros(2, 3, 6, 8, 8)  # C != 4
     with pytest.raises(ValueError):
         norm.encode(bad, channel_dim=1)
+
+
+def test_norm_to_kelvin_np_bf16():
+    t = torch.full((2, 8, 8), -0.5, dtype=torch.bfloat16)
+    arr = norm_to_kelvin_np(t, "B13")
+    assert arr.dtype == np.float32
+    expected = norm_to_kelvin(t.float(), "B13").numpy()
+    np.testing.assert_allclose(arr, expected, rtol=1e-3)
 
 
 def test_b13_threshold_norm():

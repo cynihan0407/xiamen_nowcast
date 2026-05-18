@@ -5,7 +5,7 @@ import torch
 from pytorch_lightning import LightningModule
 from torch.optim import AdamW
 
-from src.data.normalizers import norm_to_kelvin
+from src.data.normalizers import norm_to_kelvin_np
 from src.metrics.csi import csi_at_threshold_k
 from src.models.vae.losses import vae_total_loss
 
@@ -43,8 +43,8 @@ class STVAELightningModule(LightningModule):
     @torch.no_grad()
     def _val_csi_b13(self, recon: torch.Tensor, x: torch.Tensor) -> float:
         """在 B13 @ 240K 上算逐像素 CSI（norm 域转 K 后阈值化）。"""
-        pred_k = norm_to_kelvin(recon[:, 3], "B13").cpu().numpy()
-        true_k = norm_to_kelvin(x[:, 3], "B13").cpu().numpy()
+        pred_k = norm_to_kelvin_np(recon[:, 3], "B13")
+        true_k = norm_to_kelvin_np(x[:, 3], "B13")
         m = csi_at_threshold_k(pred_k, true_k, self.csi_threshold_K)
         return float(m["CSI"])
 
@@ -56,6 +56,7 @@ class STVAELightningModule(LightningModule):
         )
         self.log("val/loss", loss, prog_bar=True, on_epoch=True, batch_size=x.size(0))
         self.log("val/l1", logs["train/l1"], on_epoch=True, batch_size=x.size(0))
+        self.log("val/kl", logs["train/kl"], on_epoch=True, batch_size=x.size(0))
         csi = self._val_csi_b13(recon, x)
         self.log("val/csi_b13_240K", csi, prog_bar=True, on_epoch=True, batch_size=x.size(0))
 

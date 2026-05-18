@@ -7,6 +7,11 @@ defaults:
 
 seed: 2025
 
+# 可选：从已有 .ckpt 继续训练（命令行覆盖，例 ckpt_path=outputs/.../last.ckpt）
+ckpt_path: null
+# true：只加载 state_dict（改 b13_weight / lr 微调时用）；false：连优化器与 epoch 一并恢复
+ckpt_weights_only: false
+
 # 与 configs/config.yaml 对齐；h8_v7.yaml 中 sampler.cache_path 依赖 paths.root
 paths:
   root: ${oc.env:XN_ROOT,${hydra:runtime.cwd}}

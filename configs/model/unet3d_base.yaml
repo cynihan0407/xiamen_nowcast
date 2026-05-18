@@ -1,0 +1,14 @@
+# 3D U-Net 主干（base，A100 80GB 上的正式版）
+_target_: src.models.unet3d.unet3d.UNet3D
+
+in_channels: 16
+out_channels: 8
+base_channels: 96
+channel_mult: [1, 2, 4, 4]
+num_res_blocks: 2
+attn_resolutions: [16, 8]
+time_embed_dim: 384
+dropout: 0.0
+num_heads: 6
+attention_spatial: true
+attention_temporal: true

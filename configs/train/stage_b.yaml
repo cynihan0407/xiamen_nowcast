@@ -1,40 +1,43 @@
-# Stage-B：3D U-Net + EDM 主干训练（占位，待训练入口落地后启用）
+# Stage-B：3D U-Net + EDM 主干训练
 tag: stage_b_unet3d_edm
 
 epochs: 200
-gradient_clip_val: 1.0
-accumulate_grad_batches: 1
-precision: "bf16-mixed"
+lr: 1.0e-4
+weight_decay: 1.0e-6
+betas: [0.9, 0.999]
 
-optimizer:
-  _target_: torch.optim.AdamW
-  lr: 1.0e-4
-  betas: [0.9, 0.999]
-  weight_decay: 1.0e-6
+# EMA
+ema_enable: true
+ema_decay: 0.9999
 
-scheduler:
-  _target_: torch.optim.lr_scheduler.CosineAnnealingLR
-  T_max: ${train.epochs}
-  eta_min: 1.0e-6
+# 验证采样
+val_sample_steps: 18
+val_sample_max_batches: 4
+csi_threshold_K: 240.0
 
-ema:
-  enable: true
-  decay: 0.9999
-  update_every: 1
-
-# Lightning Trainer 主要参数
+# Lightning Trainer
 trainer:
+  max_epochs: ${train.epochs}
   accelerator: gpu
-  devices: -1                # 使用全部可见 GPU
-  strategy: "deepspeed_stage_2"
+  devices: 1
+  precision: bf16-mixed
+  gradient_clip_val: 1.0
   log_every_n_steps: 50
-  val_check_interval: 0.25   # 每 1/4 epoch 验证一次
-  num_sanity_val_steps: 2
+  check_val_every_n_epoch: 1
+  num_sanity_val_steps: 0
 
-# Checkpoint 行为
+# 训练数据加载（覆盖 data.loader 默认）
+loader:
+  batch_size: 4
+  eval_batch_size: 2
+  num_workers: 6
+  persistent_workers: true
+  prefetch_factor: 4
+
+# Checkpoint
 checkpoint:
-  monitor: "val/edm_loss"
-  mode: "min"
+  monitor: val/edm_loss
+  mode: min
   save_top_k: 3
   save_last: true
-  every_n_epochs: 1
+  filename: edm-{epoch:03d}-{val_edm_loss:.4f}

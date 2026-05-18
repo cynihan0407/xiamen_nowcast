@@ -78,6 +78,11 @@ def norm_to_kelvin(value: ArrayLike, band: str) -> ArrayLike:
     return np.asarray(value) * half_range + mid
 
 
+def norm_to_kelvin_np(value: torch.Tensor, band: str) -> np.ndarray:
+    """Tensor → 开尔文 ``float32`` NumPy 数组（bf16/fp16 混合精度训练安全）。"""
+    return norm_to_kelvin(value.detach().float(), band).cpu().numpy()
+
+
 def b13_norm_threshold_for_kelvin(temperature_K: float) -> float:
     """把 B13 的开尔文阈值翻译到归一化域。
 
