@@ -6,6 +6,9 @@ lr: 1.0e-4
 weight_decay: 1.0e-6
 kl_weight: 1.0e-6
 b13_weight: 2.0
+dice_weight: 0.0
+dice_tau: 0.02
+dice_thresholds_K: [240.0]
 csi_threshold_K: 240.0
 
 # Lightning Trainer

@@ -75,6 +75,11 @@ def main(cfg: DictConfig) -> None:
         weight_decay=float(cfg.train.weight_decay),
         kl_weight=float(cfg.train.kl_weight),
         b13_weight=float(cfg.train.b13_weight),
+        dice_weight=float(OmegaConf.select(cfg, "train.dice_weight", default=0.0)),
+        dice_tau=float(OmegaConf.select(cfg, "train.dice_tau", default=0.02)),
+        dice_thresholds_K=tuple(
+            float(x) for x in OmegaConf.select(cfg, "train.dice_thresholds_K", default=[240.0])
+        ),
         csi_threshold_K=float(cfg.train.csi_threshold_K),
     )
 

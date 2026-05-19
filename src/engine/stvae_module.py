@@ -19,6 +19,9 @@ class STVAELightningModule(LightningModule):
         weight_decay: float = 1e-6,
         kl_weight: float = 1e-6,
         b13_weight: float = 2.0,
+        dice_weight: float = 0.0,
+        dice_tau: float = 0.02,
+        dice_thresholds_K: tuple[float, ...] = (240.0,),
         csi_threshold_K: float = 240.0,
     ) -> None:
         super().__init__()
@@ -28,13 +31,24 @@ class STVAELightningModule(LightningModule):
         self.weight_decay = weight_decay
         self.kl_weight = kl_weight
         self.b13_weight = b13_weight
+        self.dice_weight = dice_weight
+        self.dice_tau = dice_tau
+        self.dice_thresholds_K = tuple(dice_thresholds_K)
         self.csi_threshold_K = csi_threshold_K
 
     def training_step(self, batch: dict, batch_idx: int) -> torch.Tensor:
         x = batch["x"]
         recon, mu, logvar = self.model(x)
         loss, logs = vae_total_loss(
-            recon, x, mu, logvar, kl_weight=self.kl_weight, b13_weight=self.b13_weight
+            recon,
+            x,
+            mu,
+            logvar,
+            kl_weight=self.kl_weight,
+            b13_weight=self.b13_weight,
+            dice_weight=self.dice_weight,
+            dice_tau=self.dice_tau,
+            dice_thresholds_K=self.dice_thresholds_K,
         )
         self.log_dict(logs, prog_bar=False, on_step=True, on_epoch=True, batch_size=x.size(0))
         self.log("train/loss", loss, prog_bar=True, on_step=True, on_epoch=True, batch_size=x.size(0))
@@ -52,11 +66,20 @@ class STVAELightningModule(LightningModule):
         x = batch["x"]
         recon, mu, logvar = self.model(x)
         loss, logs = vae_total_loss(
-            recon, x, mu, logvar, kl_weight=self.kl_weight, b13_weight=self.b13_weight
+            recon,
+            x,
+            mu,
+            logvar,
+            kl_weight=self.kl_weight,
+            b13_weight=self.b13_weight,
+            dice_weight=self.dice_weight,
+            dice_tau=self.dice_tau,
+            dice_thresholds_K=self.dice_thresholds_K,
         )
         self.log("val/loss", loss, prog_bar=True, on_epoch=True, batch_size=x.size(0))
         self.log("val/l1", logs["train/l1"], on_epoch=True, batch_size=x.size(0))
         self.log("val/kl", logs["train/kl"], on_epoch=True, batch_size=x.size(0))
+        self.log("val/dice", logs["train/dice"], on_epoch=True, batch_size=x.size(0))
         csi = self._val_csi_b13(recon, x)
         self.log("val/csi_b13_240K", csi, prog_bar=True, on_epoch=True, batch_size=x.size(0))
 
