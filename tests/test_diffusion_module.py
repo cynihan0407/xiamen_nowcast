@@ -45,6 +45,21 @@ def test_ema_update_and_restore():
         for p in net.parameters():
             p.fill_(1.0)
     ema.update(net)
+
+
+def test_ema_update_after_model_moved_to_cuda():
+    """续训场景：shadow 在 CPU、参数在 GPU 时 update 不应报错。"""
+    if not torch.cuda.is_available():
+        return
+    net = nn.Linear(4, 4)
+    ema = EMAState(net, decay=0.5)
+    net.cuda()
+    with torch.no_grad():
+        for p in net.parameters():
+            p.fill_(2.0)
+    ema.update(net)
+    for n, p in net.named_parameters():
+        assert ema.shadow[n].device == p.device
     # shadow = 0.5*shadow + 0.5*1.0；初始 shadow 为初始权重
     assert all((v != 1.0).any() for v in ema.shadow.values())
 

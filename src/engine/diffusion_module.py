@@ -69,7 +69,11 @@ class EMAState:
         for n, p in model.named_parameters():
             if not p.requires_grad:
                 continue
-            self.shadow[n].mul_(self.decay).add_(p.detach(), alpha=1.0 - self.decay)
+            s = self.shadow[n]
+            if s.device != p.device:
+                s = s.to(device=p.device, dtype=p.dtype)
+                self.shadow[n] = s
+            s.mul_(self.decay).add_(p.detach(), alpha=1.0 - self.decay)
 
     @torch.no_grad()
     def copy_to(self, model: nn.Module) -> dict[str, torch.Tensor]:
@@ -83,7 +87,7 @@ class EMAState:
     def restore(self, model: nn.Module, backup: dict[str, torch.Tensor]) -> None:
         for n, p in model.named_parameters():
             if n in backup:
-                p.data.copy_(backup[n])
+                p.data.copy_(backup[n].to(device=p.device, dtype=p.dtype))
 
 
 # ---------------------------------------------------------------------------
@@ -149,9 +153,19 @@ class DiffusionLightningModule(LightningModule):
         return out
 
     # ------------------------------------------------------------------ optimizer / EMA
+    def _sync_ema_device(self) -> None:
+        """续训时 ``ema_shadow`` 常在 CPU，模型已在 GPU；统一设备避免 update 报错。"""
+        if self.ema is None:
+            return
+        device = next(self.diffusion.denoiser.parameters()).device
+        for k, v in list(self.ema.shadow.items()):
+            if v.device != device:
+                self.ema.shadow[k] = v.to(device=device)
+
     def on_fit_start(self) -> None:
         if self._ema_enable and self.ema is None:
             self.ema = EMAState(self.diffusion.denoiser, decay=self._ema_decay)
+        self._sync_ema_device()
 
     def configure_optimizers(self):
         opt = AdamW(
@@ -182,6 +196,7 @@ class DiffusionLightningModule(LightningModule):
 
     def on_train_batch_end(self, *args, **kwargs) -> None:
         if self.ema is not None:
+            self._sync_ema_device()
             self.ema.update(self.diffusion.denoiser)
 
     # ------------------------------------------------------------------ validation
@@ -208,6 +223,8 @@ class DiffusionLightningModule(LightningModule):
             return
 
         # 用 EMA 权重采样
+        if self.ema is not None:
+            self._sync_ema_device()
         backup = self.ema.copy_to(self.diffusion.denoiser) if self.ema is not None else None
         try:
             z_pred = self._sample_future(z_past, t_future=z_future.size(2), num_steps=self.val_sample_steps)
@@ -238,4 +255,5 @@ class DiffusionLightningModule(LightningModule):
                 self.ema = EMAState(self.diffusion.denoiser, decay=self._ema_decay)
             for k, v in shadow.items():
                 if k in self.ema.shadow:
-                    self.ema.shadow[k] = v.to(self.ema.shadow[k].device)
+                    # 先落到 CPU；``on_fit_start`` 里会 ``_sync_ema_device`` 到 GPU
+                    self.ema.shadow[k] = v.detach().cpu()
