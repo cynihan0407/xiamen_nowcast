@@ -114,3 +114,33 @@ def test_sample_future_shape():
     z_past = torch.randn(1, 4, 1, 4, 4)
     z_pred = m._sample_future(z_past, t_future=2, num_steps=2)
     assert z_pred.shape == (1, 4, 2, 4, 4)
+
+
+def test_cold_pixel_weights_mask_shape_and_values():
+    """冷云顶像素应被放大到 cold_weight_factor，其他保持 1.0。"""
+    stvae = STVAE(STVAEConfig(in_channels=4, latent_channels=4, base_channels=8, num_down=2, seq_len=4))
+    unet = UNet3D(UNet3DConfig(
+        in_channels=8, out_channels=4, base_channels=8, channel_mult=(1, 2),
+        num_res_blocks=1, attn_resolutions=(), time_embed_dim=16, num_heads=1,
+    ))
+    diffusion = EDMDiffusion(unet, EDMConfig(num_steps=2))
+    m = DiffusionLightningModule(
+        diffusion=diffusion,
+        stvae=stvae,
+        ema_enable=False,
+        cold_weight_enable=True,
+        cold_weight_threshold_K=220.0,
+        cold_weight_factor=4.0,
+    )
+
+    B, T, H, W = 2, 2, 16, 16
+    future = torch.zeros(B, 4, T, H, W)
+    future[..., :, :H // 2, :] = -0.9  # 模拟极冷区（norm < -0.385 即 ≤ 220K）
+    z_future = torch.zeros(B, 4, T, 4, 4)
+
+    w = m._cold_pixel_weights(future, z_future)
+    assert w.shape == (B, 1, T, 4, 4)
+    # 上半部分应被识别为冷，权重 = factor
+    assert torch.allclose(w[:, :, :, :2, :], torch.full_like(w[:, :, :, :2, :], 4.0))
+    # 下半部分非冷，权重 = 1
+    assert torch.allclose(w[:, :, :, 2:, :], torch.ones_like(w[:, :, :, 2:, :]))

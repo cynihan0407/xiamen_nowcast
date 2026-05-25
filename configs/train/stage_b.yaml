@@ -15,6 +15,12 @@ val_sample_steps: 18
 val_sample_max_batches: 4
 csi_threshold_K: 240.0
 
+# 深对流像素加权（Step D 微调）：
+#   true 时按 future 帧 B13 ≤ cold_weight_threshold_K 的像素，在 latent loss 里乘以 factor
+cold_weight_enable: false
+cold_weight_threshold_K: 220.0
+cold_weight_factor: 3.0
+
 # Lightning Trainer
 trainer:
   max_epochs: ${train.epochs}

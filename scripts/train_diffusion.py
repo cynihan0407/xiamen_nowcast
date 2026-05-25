@@ -129,6 +129,9 @@ def main(cfg: DictConfig) -> None:
         csi_threshold_K=float(cfg.train.csi_threshold_K),
         val_sample_steps=int(cfg.train.val_sample_steps),
         val_sample_max_batches=int(cfg.train.val_sample_max_batches),
+        cold_weight_enable=bool(OmegaConf.select(cfg, "train.cold_weight_enable", default=False)),
+        cold_weight_threshold_K=float(OmegaConf.select(cfg, "train.cold_weight_threshold_K", default=220.0)),
+        cold_weight_factor=float(OmegaConf.select(cfg, "train.cold_weight_factor", default=3.0)),
     )
 
     # 3) Trainer

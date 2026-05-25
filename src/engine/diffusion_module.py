@@ -20,11 +20,12 @@ from typing import Optional
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from pytorch_lightning import LightningModule
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR
 
-from src.data.normalizers import norm_to_kelvin_np
+from src.data.normalizers import b13_norm_threshold_for_kelvin, norm_to_kelvin_np
 from src.metrics.csi import csi_at_threshold_k
 from src.models.diffusion.edm import EDMDiffusion
 from src.models.vae.stvae import STVAE
@@ -109,6 +110,9 @@ class DiffusionLightningModule(LightningModule):
         csi_threshold_K: float = 240.0,
         val_sample_steps: int = 18,
         val_sample_max_batches: int = 4,
+        cold_weight_enable: bool = False,
+        cold_weight_threshold_K: float = 220.0,
+        cold_weight_factor: float = 3.0,
     ) -> None:
         super().__init__()
         self.save_hyperparameters(ignore=["diffusion", "stvae"])
@@ -127,6 +131,11 @@ class DiffusionLightningModule(LightningModule):
         self.csi_threshold_K = csi_threshold_K
         self.val_sample_steps = int(val_sample_steps)
         self.val_sample_max_batches = int(val_sample_max_batches)
+
+        self.cold_weight_enable = bool(cold_weight_enable)
+        self.cold_weight_threshold_K = float(cold_weight_threshold_K)
+        self.cold_weight_factor = float(cold_weight_factor)
+        self._cold_norm_threshold = b13_norm_threshold_for_kelvin(self.cold_weight_threshold_K)
 
         self.ema: Optional[EMAState] = None
         self._ema_decay = ema_decay
@@ -180,6 +189,29 @@ class DiffusionLightningModule(LightningModule):
         return {"optimizer": opt, "lr_scheduler": {"scheduler": sch, "interval": "epoch"}}
 
     # ------------------------------------------------------------------ training
+    @torch.no_grad()
+    def _cold_pixel_weights(self, future_image: torch.Tensor, z_future: torch.Tensor) -> torch.Tensor:
+        """根据 future 帧的 B13 阈值掩膜构造 latent 像素权重图。
+
+        Args:
+            future_image: ``[B, 4, T, H, W]``，norm 域。
+            z_future:     ``[B, C_z, T, H', W']``。
+
+        Returns:
+            ``[B, 1, T, H', W']`` 的权重张量，最小 1.0，冷云顶处放大到 ``cold_weight_factor``。
+        """
+        b13 = future_image[:, 3]  # [B, T, H, W]
+        cold = (b13 <= self._cold_norm_threshold).float()
+        B, T, H, W = cold.shape
+        Hp, Wp = z_future.size(3), z_future.size(4)
+        # 时间维 z_future 与 future 应一致，空间维下采样到 latent 分辨率
+        # max_pool 保证「任一像素是冷云顶 → latent 单元就算冷」
+        cold = cold.view(B * T, 1, H, W)
+        cold = F.adaptive_max_pool2d(cold, (Hp, Wp))
+        cold = cold.view(B, 1, T, Hp, Wp)
+        weights = 1.0 + (self.cold_weight_factor - 1.0) * cold
+        return weights.to(dtype=z_future.dtype)
+
     def training_step(self, batch: dict, batch_idx: int) -> torch.Tensor:
         past = batch["past"]
         future = batch["future"]
@@ -189,8 +221,15 @@ class DiffusionLightningModule(LightningModule):
         z_future = self.encode_seq(future)
         cond = build_cond_from_past(z_past, t_future=z_future.size(2))
 
-        loss, logs = self.diffusion.compute_loss(z_future, cond)
+        weights = None
+        if self.cold_weight_enable and self.cold_weight_factor > 1.0:
+            weights = self._cold_pixel_weights(future, z_future)
+
+        loss, logs = self.diffusion.compute_loss(z_future, cond, weights=weights)
         self.log("train/loss", loss, prog_bar=True, on_step=True, on_epoch=True, batch_size=B)
+        if weights is not None:
+            self.log("train/cold_frac", float(weights.gt(1.0).float().mean()),
+                     on_step=False, on_epoch=True, batch_size=B)
         self.log_dict(logs, prog_bar=False, on_step=True, on_epoch=True, batch_size=B)
         return loss
 
