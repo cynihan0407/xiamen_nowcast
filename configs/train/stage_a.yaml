@@ -11,6 +11,12 @@ dice_tau: 0.02
 dice_thresholds_K: [240.0]
 csi_threshold_K: 240.0
 
+# Path 2：decoder sharpening 微调（默认关闭，命令行覆盖启用）
+#   sharpen_weight > 0      ：加 B13 空间梯度一致性损失，抑制糊化
+#   finetune_decoder_only   ：冻结 encoder，仅训 decoder 末层 + out_conv
+sharpen_weight: 0.0
+finetune_decoder_only: false
+
 # Lightning Trainer
 trainer:
   max_epochs: ${train.epochs}

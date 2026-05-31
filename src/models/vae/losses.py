@@ -44,6 +44,28 @@ def b13_soft_dice_loss(
     return torch.stack(losses).mean()
 
 
+def gradient_sharpen_loss(
+    pred: torch.Tensor,
+    true: torch.Tensor,
+    *,
+    channel: int = 3,
+) -> torch.Tensor:
+    """空间高频（梯度）一致性损失，用于抑制 decoder 输出的糊化。
+
+    对指定通道（默认 B13=3）在 ``H, W`` 维做一阶有限差分，惩罚预测与真值的
+    梯度差异，从而鼓励重建保留云顶边缘等高频结构。
+
+    pred, true: ``[B, C, T, H, W]``（norm 域）。
+    """
+    p = pred[:, channel]
+    t = true[:, channel]
+    p_dx = p[..., :, 1:] - p[..., :, :-1]
+    t_dx = t[..., :, 1:] - t[..., :, :-1]
+    p_dy = p[..., 1:, :] - p[..., :-1, :]
+    t_dy = t[..., 1:, :] - t[..., :-1, :]
+    return (p_dx - t_dx).abs().mean() + (p_dy - t_dy).abs().mean()
+
+
 def vae_total_loss(
     recon: torch.Tensor,
     x: torch.Tensor,
@@ -56,12 +78,14 @@ def vae_total_loss(
     dice_weight: float = 0.0,
     dice_tau: float = 0.02,
     dice_thresholds_K: tuple[float, ...] = (240.0,),
+    sharpen_weight: float = 0.0,
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
     """返回 ``(loss, log_dict)``。
 
     * ``b13_cold_norm_thr``：约 240 K 对应的 norm 阈值（与 ``b13_norm_threshold_for_kelvin(240)`` 一致）。
     * 对 B13 通道中「冷于阈值」的像素施加 ``b13_weight`` 倍 L1 权重。
     * ``dice_weight > 0`` 时，额外加入 B13 阈值事件上的 soft-Dice 损失。
+    * ``sharpen_weight > 0`` 时，额外加入 B13 空间梯度一致性损失（抑制糊化，Path 2 decoder 微调用）。
     """
     diff = (recon - x).abs()
     b13 = x[:, 3:4]
@@ -78,12 +102,16 @@ def vae_total_loss(
             thresholds_K=dice_thresholds_K,
             tau=dice_tau,
         )
+    sharpen = l1.new_zeros(())
+    if sharpen_weight > 0:
+        sharpen = gradient_sharpen_loss(recon, x)
 
-    total = l1_w + kl_weight * kl + dice_weight * dice
+    total = l1_w + kl_weight * kl + dice_weight * dice + sharpen_weight * sharpen
     logs = {
         "train/l1": l1.detach(),
         "train/l1_weighted": l1_w.detach(),
         "train/kl": kl.detach(),
         "train/dice": dice.detach(),
+        "train/sharpen": sharpen.detach(),
     }
     return total, logs

@@ -81,6 +81,10 @@ def main(cfg: DictConfig) -> None:
             float(x) for x in OmegaConf.select(cfg, "train.dice_thresholds_K", default=[240.0])
         ),
         csi_threshold_K=float(cfg.train.csi_threshold_K),
+        sharpen_weight=float(OmegaConf.select(cfg, "train.sharpen_weight", default=0.0)),
+        finetune_decoder_only=bool(
+            OmegaConf.select(cfg, "train.finetune_decoder_only", default=False)
+        ),
     )
 
     ckpt_cfg = cfg.train.checkpoint
