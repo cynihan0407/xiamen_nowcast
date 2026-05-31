@@ -98,8 +98,15 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--n-plot", type=int, default=6, help="保存目视图的个例数（高/中/低 CSI）")
     p.add_argument("--batch-size", type=int, default=4)
     p.add_argument("--device", default="cuda")
+    p.add_argument("--thresh", type=float, default=THRESH_K, help="CSI 阈值(K)；深对流看 220/210")
     p.add_argument("--compare-ckpt", default=None, help="可选：第二个 ckpt 对比")
     p.add_argument("--compare-label", default="compare")
+    # === STVAE 网络结构（必须与训练时一致；默认 = 杠杆2 nd3） ===
+    p.add_argument("--in-channels", type=int, default=4)
+    p.add_argument("--latent-channels", type=int, default=12)
+    p.add_argument("--base-channels", type=int, default=48)
+    p.add_argument("--num-down", type=int, default=3)
+    p.add_argument("--seq-len", type=int, default=18)
     return p.parse_args()
 
 
@@ -230,6 +237,18 @@ def per_frame_aggregate(details: list[dict]) -> pd.DataFrame:
 def main() -> None:
     args = parse_args()
     device = torch.device(args.device if args.device != "cuda" or torch.cuda.is_available() else "cpu")
+    thresh = float(args.thresh)
+    stvae_cfg = STVAEConfig(
+        in_channels=args.in_channels,
+        latent_channels=args.latent_channels,
+        base_channels=args.base_channels,
+        num_down=args.num_down,
+        seq_len=args.seq_len,
+    )
+    print(
+        f"[diagnose] STVAE 结构: in={stvae_cfg.in_channels} latent={stvae_cfg.latent_channels} "
+        f"base={stvae_cfg.base_channels} num_down={stvae_cfg.num_down} | CSI@{thresh:.0f}K"
+    )
 
     val_dir = args.val_dir or __import__("os").environ.get(
         "XN_VAL_DIR", "/share/home/sera_hujun/val_data_v7_unbiased_501"
@@ -241,8 +260,12 @@ def main() -> None:
     loader = DataLoader(ds, batch_size=args.batch_size, shuffle=False, num_workers=2, pin_memory=True)
 
     def _load(ckpt: str) -> STVAE:
-        m = STVAE(STVAEConfig())
-        load_stvae_weights(m, ckpt)
+        m = STVAE(stvae_cfg)
+        missing, unexpected = load_stvae_weights(m, ckpt)
+        if missing or unexpected:
+            print(f"[diagnose] load {ckpt}: missing={len(missing)} unexpected={len(unexpected)}")
+            if unexpected:
+                print("  >> 有 unexpected 权重，通常说明 --base/latent/num-down 与 ckpt 不一致！")
         return m.to(device)
 
     out_root = Path(args.out)
@@ -250,7 +273,7 @@ def main() -> None:
     label_dir.mkdir(parents=True, exist_ok=True)
 
     stvae = _load(args.ckpt)
-    df, details = run_eval(stvae, loader, device, args.max_samples, THRESH_K)
+    df, details = run_eval(stvae, loader, device, args.max_samples, thresh)
     df.to_csv(label_dir / "per_sample.csv", index=False)
     pf = per_frame_aggregate(details)
     pf.to_csv(label_dir / "per_frame_csi.csv", index=False)
@@ -262,7 +285,7 @@ def main() -> None:
         ax.fill_between(pf["frame"], pf["csi_mean"] - pf["csi_std"], pf["csi_mean"] + pf["csi_std"], alpha=0.2)
         ax.axvline(PAST_LEN - 0.5, color="gray", linestyle="--", label="past|future")
         ax.set_xlabel("frame index (0..17)")
-        ax.set_ylabel(f"CSI @ {THRESH_K}K")
+        ax.set_ylabel(f"CSI @ {thresh}K")
         ax.legend()
         ax.grid(True, alpha=0.3)
         fig.tight_layout()
@@ -301,7 +324,7 @@ def main() -> None:
             continue
         r, x0 = idx_to_tensor[idx]
         csi = df.loc[df["idx"] == idx, "csi_all18"].iloc[0]
-        plot_case(r, x0, label_dir / f"case_{name}_idx{idx}_csi{csi:.3f}.png", f"{args.label} {name} idx={idx}", THRESH_K)
+        plot_case(r, x0, label_dir / f"case_{name}_idx{idx}_csi{csi:.3f}.png", f"{args.label} {name} idx={idx}", thresh)
 
     summary = summarize_df(df)
     summary["ckpt"] = str(Path(args.ckpt).resolve())
@@ -319,7 +342,7 @@ def main() -> None:
         stvae2 = _load(args.compare_ckpt)
         cmp_dir = out_root / args.compare_label
         cmp_dir.mkdir(parents=True, exist_ok=True)
-        df2, det2 = run_eval(stvae2, loader, device, args.max_samples, THRESH_K)
+        df2, det2 = run_eval(stvae2, loader, device, args.max_samples, thresh)
         df2.to_csv(cmp_dir / "per_sample.csv", index=False)
         s2 = summarize_df(df2)
         (cmp_dir / "summary.json").write_text(json.dumps(to_json_safe(s2), indent=2), encoding="utf-8")
