@@ -1,0 +1,9 @@
+# 时空 VAE 网络（num_down=3 版：256 -> 32×32 latent，8 倍空间压缩）
+# 相比默认 stvae.yaml（num_down=4, 16×16）保留更多对流细节，用于杠杆 2 重训。
+_target_: src.models.vae.stvae.STVAE
+
+in_channels: 4
+latent_channels: 12
+base_channels: 48
+num_down: 3
+seq_len: 18

@@ -1,11 +1,12 @@
 # 3D U-Net 主干（small，用于冒烟与 ablation）
 _target_: src.models.unet3d.unet3d.UNet3D
 
-in_channels: 16          # latent C_z(=8) + cond C_z(=8)
-out_channels: 8          # latent C_z
+in_channels: 24          # latent C_z(=12) + cond C_z(=12)
+out_channels: 12         # latent C_z
 base_channels: 64
 channel_mult: [1, 2, 2, 4]
-num_res_blocks: 2
+# 注意力放在 16/8 分辨率：num_down=3 时 latent=32×32，
+# 32 这层不触发空间注意力，避免 1024 token 的二次方显存爆炸。
 attn_resolutions: [16, 8]
 time_embed_dim: 256
 dropout: 0.0

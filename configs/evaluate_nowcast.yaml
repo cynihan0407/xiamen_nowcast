@@ -13,12 +13,15 @@ stvae_ckpt_path: null
 diffusion_ckpt_path: null
 
 # STVAE 结构（须与 Stage-A 训练一致）
+# 杠杆 2（num_down=3，32×32 latent）为当前主线默认值。
+# 复现旧 num_down=4 模型时命令行覆盖：
+#   stvae.latent_channels=8 stvae.base_channels=32 stvae.num_down=4
 stvae:
   _target_: src.models.vae.stvae.STVAE
   in_channels: 4
-  latent_channels: 8
-  base_channels: 32
-  num_down: 4
+  latent_channels: 12
+  base_channels: 48
+  num_down: 3
   seq_len: 18
 
 # 评估 split：test | val
