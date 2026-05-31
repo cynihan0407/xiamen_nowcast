@@ -45,6 +45,10 @@ def load_diffusion_lit(
         raise FileNotFoundError(f"diffusion_ckpt_path 不存在: {p}")
     state = torch.load(p, map_location=device, weights_only=False)
     sd = state.get("state_dict", state)
+    # 关键：扩散 ckpt 内嵌了训练时的冻结 STVAE 权重（``stvae.*``）。这里**剔除**它们，
+    # 避免覆盖调用方已通过 load_stvae_weights() 装入 lit.stvae 的（可能不同的）STVAE，
+    # 从而支持「同一扩散模型 + 替换后的 STVAE/decoder」做评估。
+    sd = {k: v for k, v in sd.items() if not k.startswith("stvae.")}
     lit.load_state_dict(sd, strict=False)
 
     if use_ema and "ema_shadow" in state:
