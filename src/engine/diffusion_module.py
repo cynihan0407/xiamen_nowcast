@@ -113,6 +113,7 @@ class DiffusionLightningModule(LightningModule):
         cold_weight_enable: bool = False,
         cold_weight_threshold_K: float = 220.0,
         cold_weight_factor: float = 3.0,
+        predict_residual: bool = False,
     ) -> None:
         super().__init__()
         self.save_hyperparameters(ignore=["diffusion", "stvae"])
@@ -137,6 +138,10 @@ class DiffusionLightningModule(LightningModule):
         self.cold_weight_factor = float(cold_weight_factor)
         self._cold_norm_threshold = b13_norm_threshold_for_kelvin(self.cold_weight_threshold_K)
 
+        # 残差预报：模型不直接预测 z_future，而是预测相对 Persistence（重复最后一帧
+        # past latent）的变化量 Δz。采样时再加回 Persistence 基线。
+        self.predict_residual = bool(predict_residual)
+
         self.ema: Optional[EMAState] = None
         self._ema_decay = ema_decay
         self._ema_enable = ema_enable
@@ -160,6 +165,20 @@ class DiffusionLightningModule(LightningModule):
         if was_training:
             self.stvae.train()
         return out
+
+    @staticmethod
+    def _persist_latent(z_past: torch.Tensor, t_future: int) -> torch.Tensor:
+        """Persistence 基线 latent：最后一个 past 帧沿时间复制 ``t_future`` 次。
+
+        返回 ``[B, C_z, t_future, H', W']``。
+        """
+        return z_past[:, :, -1:, :, :].expand(-1, -1, t_future, -1, -1)
+
+    def _target_latent(self, z_future: torch.Tensor, z_past: torch.Tensor) -> torch.Tensor:
+        """扩散建模的目标：残差模式下为 ``z_future - Persistence``，否则为 ``z_future``。"""
+        if self.predict_residual:
+            return z_future - self._persist_latent(z_past, z_future.size(2))
+        return z_future
 
     # ------------------------------------------------------------------ optimizer / EMA
     def _sync_ema_device(self) -> None:
@@ -225,7 +244,8 @@ class DiffusionLightningModule(LightningModule):
         if self.cold_weight_enable and self.cold_weight_factor > 1.0:
             weights = self._cold_pixel_weights(future, z_future)
 
-        loss, logs = self.diffusion.compute_loss(z_future, cond, weights=weights)
+        target = self._target_latent(z_future, z_past)
+        loss, logs = self.diffusion.compute_loss(target, cond, weights=weights)
         self.log("train/loss", loss, prog_bar=True, on_step=True, on_epoch=True, batch_size=B)
         if weights is not None:
             self.log("train/cold_frac", float(weights.gt(1.0).float().mean()),
@@ -244,7 +264,10 @@ class DiffusionLightningModule(LightningModule):
         B, C_z, T_p, H, W = z_past.shape
         shape = (B, C_z, t_future, H, W)
         cond = build_cond_from_past(z_past, t_future=t_future)
-        return self.diffusion.heun_sample(shape, cond=cond, num_steps=num_steps)
+        out = self.diffusion.heun_sample(shape, cond=cond, num_steps=num_steps)
+        if self.predict_residual:
+            out = out + self._persist_latent(z_past, t_future)
+        return out
 
     def validation_step(self, batch: dict, batch_idx: int) -> None:
         past = batch["past"]
@@ -254,7 +277,8 @@ class DiffusionLightningModule(LightningModule):
         z_past = self.encode_seq(past)
         z_future = self.encode_seq(future)
         cond = build_cond_from_past(z_past, t_future=z_future.size(2))
-        loss, _ = self.diffusion.compute_loss(z_future, cond)
+        target = self._target_latent(z_future, z_past)
+        loss, _ = self.diffusion.compute_loss(target, cond)
         self.log("val/edm_loss", loss, prog_bar=True, on_epoch=True, batch_size=B)
 
         # 仅前 N 个 batch 跑采样评估，避免每 epoch 太慢

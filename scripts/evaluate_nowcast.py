@@ -109,11 +109,22 @@ def main(cfg: DictConfig) -> None:
         if k != "_target_"
     }
     diffusion = EDMDiffusion(denoiser=denoiser, **diff_kw)
+
+    # 从 ckpt 的超参自动读取 predict_residual，确保评估与训练一致（避免残差/直接预测错配）。
+    _blob = torch.load(diff_ckpt, map_location="cpu", weights_only=False)
+    _hp = _blob.get("hyper_parameters", {}) if isinstance(_blob, dict) else {}
+    predict_residual = bool(
+        _hp.get("predict_residual", OmegaConf.select(cfg, "predict_residual", default=False))
+    )
+    del _blob
+    print(f"[eval] predict_residual={predict_residual}（来自 ckpt 超参，缺省回退 cfg）")
+
     lit = DiffusionLightningModule(
         diffusion=diffusion,
         stvae=stvae,
         ema_enable=use_ema,
         val_sample_steps=num_steps,
+        predict_residual=predict_residual,
     )
     load_diffusion_lit(lit, diff_ckpt, use_ema=use_ema, device=device)
     lit = lit.to(device)

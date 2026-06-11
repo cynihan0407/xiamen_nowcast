@@ -21,6 +21,11 @@ cold_weight_enable: false
 cold_weight_threshold_K: 220.0
 cold_weight_factor: 3.0
 
+# 残差预报：true 时扩散模型预测相对 Persistence(重复最后一帧 past latent)的变化量 Δz，
+#   采样时再加回 Persistence 基线。注意：必须配合用 measure_latent_std.py residual=true
+#   重新测得的 sigma_data（残差幅度更小）。
+predict_residual: false
+
 # Lightning Trainer
 trainer:
   max_epochs: ${train.epochs}

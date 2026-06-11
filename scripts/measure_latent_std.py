@@ -86,15 +86,20 @@ def main(cfg: DictConfig) -> None:
     max_batches = cfg.max_batches
     max_batches = int(max_batches) if max_batches is not None else 30
 
+    # residual=true 时测残差 (z_future - Persistence) 的尺度，用于残差预报的 sigma_data
+    residual = bool(OmegaConf.select(cfg, "residual", default=False))
+
     dm = instantiate(cfg.data)
     loader = _get_dataloader(dm, str(cfg.split))
 
     stvae = instantiate(cfg.stvae)
     missing, unexpected = load_stvae_weights(stvae, stvae_ckpt)
     print(f"[latent] STVAE ← {stvae_ckpt}  missing={len(missing)} unexpected={len(unexpected)}")
+    print(f"[latent] residual={residual}")
     stvae = stvae.to(device).eval()
 
     st_past, st_future, st_all = _RunningStat(), _RunningStat(), _RunningStat()
+    st_resid = _RunningStat()
 
     n = 0
     for batch in tqdm(loader, desc=f"latent/{cfg.split}"):
@@ -107,13 +112,20 @@ def main(cfg: DictConfig) -> None:
         for st, mu in ((st_past, mu_p), (st_future, mu_f)):
             st.update(mu)
             st_all.update(mu)
+        if residual:
+            persist = mu_p[:, :, -1:, :, :].expand(-1, -1, mu_f.size(2), -1, -1)
+            st_resid.update(mu_f - persist)
         n += 1
 
     print(f"\nlatent 统计 ({cfg.split}, {n} batch, {st_all.n} 个元素)")
     print(f"  past   : mean={st_past.mean:.4f}  std={st_past.std:.4f}  |z|max={st_past.absmax:.4f}")
     print(f"  future : mean={st_future.mean:.4f}  std={st_future.std:.4f}  |z|max={st_future.absmax:.4f}")
     print(f"  all    : mean={st_all.mean:.4f}  std={st_all.std:.4f}  |z|max={st_all.absmax:.4f}")
-    print("\n>>> Stage-B 建议: 训练时设 diffusion.sigma_data={:.2f}".format(round(st_all.std, 2)))
+    if residual:
+        print(f"  residual(z_future-Persistence): mean={st_resid.mean:.4f}  std={st_resid.std:.4f}  |z|max={st_resid.absmax:.4f}")
+        print("\n>>> 残差预报 Stage-B 建议: train.predict_residual=true  diffusion.sigma_data={:.2f}".format(round(st_resid.std, 2)))
+    else:
+        print("\n>>> Stage-B 建议: 训练时设 diffusion.sigma_data={:.2f}".format(round(st_all.std, 2)))
 
 
 if __name__ == "__main__":

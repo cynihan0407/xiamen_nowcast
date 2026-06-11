@@ -132,6 +132,7 @@ def main(cfg: DictConfig) -> None:
         cold_weight_enable=bool(OmegaConf.select(cfg, "train.cold_weight_enable", default=False)),
         cold_weight_threshold_K=float(OmegaConf.select(cfg, "train.cold_weight_threshold_K", default=220.0)),
         cold_weight_factor=float(OmegaConf.select(cfg, "train.cold_weight_factor", default=3.0)),
+        predict_residual=bool(OmegaConf.select(cfg, "train.predict_residual", default=False)),
     )
 
     # 3) Trainer
