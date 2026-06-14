@@ -133,6 +133,10 @@ def main(cfg: DictConfig) -> None:
         cold_weight_threshold_K=float(OmegaConf.select(cfg, "train.cold_weight_threshold_K", default=220.0)),
         cold_weight_factor=float(OmegaConf.select(cfg, "train.cold_weight_factor", default=3.0)),
         predict_residual=bool(OmegaConf.select(cfg, "train.predict_residual", default=False)),
+        advect_residual=bool(OmegaConf.select(cfg, "train.advect_residual", default=False)),
+        flow_max_disp=int(OmegaConf.select(cfg, "train.flow_max_disp", default=6)),
+        flow_win=int(OmegaConf.select(cfg, "train.flow_win", default=9)),
+        flow_scale=int(OmegaConf.select(cfg, "train.flow_scale", default=4)),
     )
 
     # 3) Trainer

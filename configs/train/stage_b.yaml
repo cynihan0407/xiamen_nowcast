@@ -26,6 +26,14 @@ cold_weight_factor: 3.0
 #   重新测得的 sigma_data（残差幅度更小）。
 predict_residual: false
 
+# 光流平流残差（拉格朗日 Persistence）：true 时基线改为"最后一帧沿光流平流到各时效"，
+#   模型只学增长/消散/形变，云系平移由基线提供。优先级高于 predict_residual。
+#   需用 measure_latent_std.py advect=true 重测 sigma_data。
+advect_residual: false
+flow_max_disp: 6      # 降采样分辨率下最大搜索位移
+flow_win: 9           # 局部 SSD 聚合窗口（奇数）
+flow_scale: 4         # 光流估计降采样倍率（256 -> 64）
+
 # Lightning Trainer
 trainer:
   max_epochs: ${train.epochs}

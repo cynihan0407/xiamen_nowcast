@@ -88,6 +88,11 @@ def main(cfg: DictConfig) -> None:
 
     # residual=true 时测残差 (z_future - Persistence) 的尺度，用于残差预报的 sigma_data
     residual = bool(OmegaConf.select(cfg, "residual", default=False))
+    # advect=true 时测光流平流残差 (z_future - z_advected) 的尺度
+    advect = bool(OmegaConf.select(cfg, "advect", default=False))
+    flow_max_disp = int(OmegaConf.select(cfg, "flow_max_disp", default=6))
+    flow_win = int(OmegaConf.select(cfg, "flow_win", default=9))
+    flow_scale = int(OmegaConf.select(cfg, "flow_scale", default=4))
 
     dm = instantiate(cfg.data)
     loader = _get_dataloader(dm, str(cfg.split))
@@ -95,11 +100,15 @@ def main(cfg: DictConfig) -> None:
     stvae = instantiate(cfg.stvae)
     missing, unexpected = load_stvae_weights(stvae, stvae_ckpt)
     print(f"[latent] STVAE ← {stvae_ckpt}  missing={len(missing)} unexpected={len(unexpected)}")
-    print(f"[latent] residual={residual}")
+    print(f"[latent] residual={residual}  advect={advect}")
     stvae = stvae.to(device).eval()
 
     st_past, st_future, st_all = _RunningStat(), _RunningStat(), _RunningStat()
     st_resid = _RunningStat()
+    st_advect = _RunningStat()
+
+    if advect:
+        from src.models.flow_advect import advect_sequence, estimate_flow_from_past
 
     n = 0
     for batch in tqdm(loader, desc=f"latent/{cfg.split}"):
@@ -115,6 +124,13 @@ def main(cfg: DictConfig) -> None:
         if residual:
             persist = mu_p[:, :, -1:, :, :].expand(-1, -1, mu_f.size(2), -1, -1)
             st_resid.update(mu_f - persist)
+        if advect:
+            flow = estimate_flow_from_past(
+                past[:, 3], max_disp=flow_max_disp, win=flow_win, scale=flow_scale
+            )
+            advected = advect_sequence(past[:, :, -1], flow, mu_f.size(2))
+            mu_adv, _ = stvae.encode(advected)
+            st_advect.update(mu_f - mu_adv)
         n += 1
 
     print(f"\nlatent 统计 ({cfg.split}, {n} batch, {st_all.n} 个元素)")
@@ -123,8 +139,11 @@ def main(cfg: DictConfig) -> None:
     print(f"  all    : mean={st_all.mean:.4f}  std={st_all.std:.4f}  |z|max={st_all.absmax:.4f}")
     if residual:
         print(f"  residual(z_future-Persistence): mean={st_resid.mean:.4f}  std={st_resid.std:.4f}  |z|max={st_resid.absmax:.4f}")
-        print("\n>>> 残差预报 Stage-B 建议: train.predict_residual=true  diffusion.sigma_data={:.2f}".format(round(st_resid.std, 2)))
-    else:
+        print("\n>>> 静态残差 Stage-B 建议: train.predict_residual=true  diffusion.sigma_data={:.2f}".format(round(st_resid.std, 2)))
+    if advect:
+        print(f"  advected(z_future-z_advected) : mean={st_advect.mean:.4f}  std={st_advect.std:.4f}  |z|max={st_advect.absmax:.4f}")
+        print("\n>>> 光流平流残差 Stage-B 建议: train.advect_residual=true  diffusion.sigma_data={:.2f}".format(round(st_advect.std, 2)))
+    if not residual and not advect:
         print("\n>>> Stage-B 建议: 训练时设 diffusion.sigma_data={:.2f}".format(round(st_all.std, 2)))
 
 

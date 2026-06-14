@@ -50,9 +50,8 @@ def predict_future(
     t_future: int,
     num_steps: int,
 ) -> torch.Tensor:
-    z_past = lit.encode_seq(past)
-    z_pred = lit._sample_future(z_past, t_future=t_future, num_steps=num_steps)
-    return lit.decode_seq(z_pred)
+    # 统一走 forecast：自动处理 直接预测 / 静态残差 / 光流平流残差 三种模式
+    return lit.forecast(past, t_future=t_future, num_steps=num_steps)
 
 
 def _resolve_device(name: str) -> torch.device:
@@ -116,8 +115,11 @@ def main(cfg: DictConfig) -> None:
     predict_residual = bool(
         _hp.get("predict_residual", OmegaConf.select(cfg, "predict_residual", default=False))
     )
+    advect_residual = bool(
+        _hp.get("advect_residual", OmegaConf.select(cfg, "advect_residual", default=False))
+    )
     del _blob
-    print(f"[eval] predict_residual={predict_residual}（来自 ckpt 超参，缺省回退 cfg）")
+    print(f"[eval] predict_residual={predict_residual}  advect_residual={advect_residual}（来自 ckpt 超参）")
 
     lit = DiffusionLightningModule(
         diffusion=diffusion,
@@ -125,6 +127,10 @@ def main(cfg: DictConfig) -> None:
         ema_enable=use_ema,
         val_sample_steps=num_steps,
         predict_residual=predict_residual,
+        advect_residual=advect_residual,
+        flow_max_disp=int(_hp.get("flow_max_disp", 6)),
+        flow_win=int(_hp.get("flow_win", 9)),
+        flow_scale=int(_hp.get("flow_scale", 4)),
     )
     load_diffusion_lit(lit, diff_ckpt, use_ema=use_ema, device=device)
     lit = lit.to(device)

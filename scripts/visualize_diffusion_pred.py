@@ -168,11 +168,29 @@ def main(cfg: DictConfig) -> None:
     denoiser = instantiate(cfg.model)
     diff_kw = {k: v for k, v in OmegaConf.to_container(cfg.diffusion, resolve=True).items() if k != "_target_"}
     diffusion = EDMDiffusion(denoiser=denoiser, **diff_kw)
+
+    # 从 ckpt 超参自动读取 predict_residual，确保与训练/评估一致
+    _blob = torch.load(diff_ckpt, map_location="cpu", weights_only=False)
+    _hp = _blob.get("hyper_parameters", {}) if isinstance(_blob, dict) else {}
+    predict_residual = bool(
+        _hp.get("predict_residual", OmegaConf.select(cfg, "predict_residual", default=False))
+    )
+    advect_residual = bool(
+        _hp.get("advect_residual", OmegaConf.select(cfg, "advect_residual", default=False))
+    )
+    del _blob
+    print(f"[viz] predict_residual={predict_residual}  advect_residual={advect_residual}（来自 ckpt 超参）")
+
     lit = DiffusionLightningModule(
         diffusion=diffusion,
         stvae=stvae,
         ema_enable=use_ema,
         val_sample_steps=num_steps,
+        predict_residual=predict_residual,
+        advect_residual=advect_residual,
+        flow_max_disp=int(_hp.get("flow_max_disp", 6)),
+        flow_win=int(_hp.get("flow_win", 9)),
+        flow_scale=int(_hp.get("flow_scale", 4)),
     )
     load_diffusion_lit(lit, diff_ckpt, use_ema=use_ema, device=device)
     lit = lit.to(device)
@@ -194,9 +212,7 @@ def main(cfg: DictConfig) -> None:
         future = batch["future"].to(device)
 
         with torch.no_grad():
-            pred = lit.decode_seq(
-                lit._sample_future(lit.encode_seq(past), t_future=future.size(2), num_steps=num_steps)
-            )
+            pred = lit.forecast(past, t_future=future.size(2), num_steps=num_steps)
             persist = persistence_forecast(past, future.size(2))
 
         # [B, C, T, H, W]，取 B13 通道

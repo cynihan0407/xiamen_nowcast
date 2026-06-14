@@ -114,6 +114,10 @@ class DiffusionLightningModule(LightningModule):
         cold_weight_threshold_K: float = 220.0,
         cold_weight_factor: float = 3.0,
         predict_residual: bool = False,
+        advect_residual: bool = False,
+        flow_max_disp: int = 6,
+        flow_win: int = 9,
+        flow_scale: int = 4,
     ) -> None:
         super().__init__()
         self.save_hyperparameters(ignore=["diffusion", "stvae"])
@@ -138,9 +142,15 @@ class DiffusionLightningModule(LightningModule):
         self.cold_weight_factor = float(cold_weight_factor)
         self._cold_norm_threshold = b13_norm_threshold_for_kelvin(self.cold_weight_threshold_K)
 
-        # 残差预报：模型不直接预测 z_future，而是预测相对 Persistence（重复最后一帧
-        # past latent）的变化量 Δz。采样时再加回 Persistence 基线。
+        # 残差预报：模型不直接预测 z_future，而是预测相对基线的变化量 Δz，采样时加回基线。
+        #   predict_residual：静态 Persistence 基线（重复最后一帧 past latent）。
+        #   advect_residual ：拉格朗日 Persistence 基线（最后一帧沿光流平流到各时效后编码）。
+        #     advect_residual 优先级高于 predict_residual。
         self.predict_residual = bool(predict_residual)
+        self.advect_residual = bool(advect_residual)
+        self.flow_max_disp = int(flow_max_disp)
+        self.flow_win = int(flow_win)
+        self.flow_scale = int(flow_scale)
 
         self.ema: Optional[EMAState] = None
         self._ema_decay = ema_decay
@@ -168,17 +178,45 @@ class DiffusionLightningModule(LightningModule):
 
     @staticmethod
     def _persist_latent(z_past: torch.Tensor, t_future: int) -> torch.Tensor:
-        """Persistence 基线 latent：最后一个 past 帧沿时间复制 ``t_future`` 次。
+        """静态 Persistence 基线 latent：最后一个 past 帧沿时间复制 ``t_future`` 次。
 
         返回 ``[B, C_z, t_future, H', W']``。
         """
         return z_past[:, :, -1:, :, :].expand(-1, -1, t_future, -1, -1)
 
-    def _target_latent(self, z_future: torch.Tensor, z_past: torch.Tensor) -> torch.Tensor:
-        """扩散建模的目标：残差模式下为 ``z_future - Persistence``，否则为 ``z_future``。"""
+    @torch.no_grad()
+    def _advected_latent(self, past_images: torch.Tensor, t_future: int) -> torch.Tensor:
+        """拉格朗日 Persistence 基线：最后一帧沿光流平流到各时效后编码到 latent。
+
+        Args:
+            past_images: ``[B, 4, T_past, H, W]`` 过去帧（归一化域）。
+            t_future:    未来帧数。
+
+        Returns:
+            ``[B, C_z, t_future, H', W']`` 平流基线 latent。
+        """
+        from src.models.flow_advect import advect_sequence, estimate_flow_from_past
+
+        b13 = past_images[:, 3]  # [B, T_past, H, W]
+        flow = estimate_flow_from_past(
+            b13, max_disp=self.flow_max_disp, win=self.flow_win, scale=self.flow_scale
+        )
+        last = past_images[:, :, -1]  # [B, 4, H, W]
+        advected = advect_sequence(last, flow, t_future)  # [B, 4, t_future, H, W]
+        return self.encode_seq(advected)
+
+    def _compute_anchor(
+        self,
+        z_past: torch.Tensor,
+        past_images: torch.Tensor,
+        t_future: int,
+    ) -> Optional[torch.Tensor]:
+        """返回残差基线 latent（直接预测时为 None）。advect 优先于静态 persistence。"""
+        if self.advect_residual:
+            return self._advected_latent(past_images, t_future)
         if self.predict_residual:
-            return z_future - self._persist_latent(z_past, z_future.size(2))
-        return z_future
+            return self._persist_latent(z_past, t_future)
+        return None
 
     # ------------------------------------------------------------------ optimizer / EMA
     def _sync_ema_device(self) -> None:
@@ -244,7 +282,8 @@ class DiffusionLightningModule(LightningModule):
         if self.cold_weight_enable and self.cold_weight_factor > 1.0:
             weights = self._cold_pixel_weights(future, z_future)
 
-        target = self._target_latent(z_future, z_past)
+        anchor = self._compute_anchor(z_past, past, z_future.size(2))
+        target = z_future if anchor is None else z_future - anchor
         loss, logs = self.diffusion.compute_loss(target, cond, weights=weights)
         self.log("train/loss", loss, prog_bar=True, on_step=True, on_epoch=True, batch_size=B)
         if weights is not None:
@@ -260,14 +299,32 @@ class DiffusionLightningModule(LightningModule):
 
     # ------------------------------------------------------------------ validation
     @torch.no_grad()
-    def _sample_future(self, z_past: torch.Tensor, t_future: int, num_steps: int) -> torch.Tensor:
+    def _sample_future(
+        self,
+        z_past: torch.Tensor,
+        t_future: int,
+        num_steps: int,
+        anchor: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         B, C_z, T_p, H, W = z_past.shape
         shape = (B, C_z, t_future, H, W)
         cond = build_cond_from_past(z_past, t_future=t_future)
         out = self.diffusion.heun_sample(shape, cond=cond, num_steps=num_steps)
-        if self.predict_residual:
-            out = out + self._persist_latent(z_past, t_future)
+        if anchor is not None:
+            out = out + anchor
         return out
+
+    @torch.no_grad()
+    def forecast(self, past: torch.Tensor, t_future: int, num_steps: int) -> torch.Tensor:
+        """端到端预报：编码 past → 构造基线 → 采样残差 → 加回基线 → 解码为图像。
+
+        训练 / 验证 / 评估 / 可视化共用此入口，确保残差与平流基线逻辑一致。
+        返回 ``[B, 4, t_future, H, W]`` 归一化域图像。
+        """
+        z_past = self.encode_seq(past)
+        anchor = self._compute_anchor(z_past, past, t_future)
+        z_pred = self._sample_future(z_past, t_future=t_future, num_steps=num_steps, anchor=anchor)
+        return self.decode_seq(z_pred)
 
     def validation_step(self, batch: dict, batch_idx: int) -> None:
         past = batch["past"]
@@ -277,7 +334,8 @@ class DiffusionLightningModule(LightningModule):
         z_past = self.encode_seq(past)
         z_future = self.encode_seq(future)
         cond = build_cond_from_past(z_past, t_future=z_future.size(2))
-        target = self._target_latent(z_future, z_past)
+        anchor = self._compute_anchor(z_past, past, z_future.size(2))
+        target = z_future if anchor is None else z_future - anchor
         loss, _ = self.diffusion.compute_loss(target, cond)
         self.log("val/edm_loss", loss, prog_bar=True, on_epoch=True, batch_size=B)
 
@@ -290,7 +348,9 @@ class DiffusionLightningModule(LightningModule):
             self._sync_ema_device()
         backup = self.ema.copy_to(self.diffusion.denoiser) if self.ema is not None else None
         try:
-            z_pred = self._sample_future(z_past, t_future=z_future.size(2), num_steps=self.val_sample_steps)
+            z_pred = self._sample_future(
+                z_past, t_future=z_future.size(2), num_steps=self.val_sample_steps, anchor=anchor
+            )
             future_pred = self.decode_seq(z_pred)
         finally:
             if backup is not None and self.ema is not None:
