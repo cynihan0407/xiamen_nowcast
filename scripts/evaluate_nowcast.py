@@ -170,14 +170,14 @@ def main(cfg: DictConfig) -> None:
     assert isinstance(m, dict)
     print("\n=== 扩散模型 ===")
     for k in sorted(m.keys()):
-        if "CSI" in k or "MAE" in k or "RMSE" in k:
+        if "CSI" in k or "MAE" in k or "RMSE" in k or "GRAD" in k:
             print(f"  {k}: {m[k]:.4f}")
     if persist_state is not None:
         p = results["persistence"]
         assert isinstance(p, dict)
         print("\n=== Persistence 对照 ===")
         for k in sorted(p.keys()):
-            if "CSI" in k or "MAE" in k:
+            if "CSI" in k or "MAE" in k or "GRAD" in k:
                 print(f"  {k}: {p[k]:.4f}")
 
     if bool(cfg.save_json):

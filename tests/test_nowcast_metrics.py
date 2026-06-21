@@ -29,3 +29,5 @@ def test_finalize_mae_and_csi():
     assert m["MAE_B13_K"] >= 0
     assert "CSI_B13_240K_global" in m
     assert "CSI_B13_240K_mean_per_sample" in m
+    assert "GRAD_MAE_B13_K" in m
+    assert m["GRAD_MAE_B13_K"] >= 0

@@ -18,7 +18,7 @@
 
 每个样本输出 1 个 PNG：``sample_{i}.png``，3×T 网格（真值 / 预报 / Persistence），
 颜色为 B13 开尔文，越冷越白（``Greys_r``，vmin=190 K, vmax=300 K）。同时打印
-每个样本的 ``MAE_K`` / ``CSI@240K``。
+每个样本的 ``MAE_K`` / ``GRAD_MAE_B13_K`` / ``CSI@240K``。
 """
 from __future__ import annotations
 
@@ -38,6 +38,7 @@ if str(ROOT) not in sys.path:
 from src.data.normalizers import norm_to_kelvin_np  # noqa: E402
 from src.engine.diffusion_module import DiffusionLightningModule  # noqa: E402
 from src.metrics.csi import csi_at_threshold_k  # noqa: E402
+from src.metrics.grad_metrics import gradient_mae_b13_kelvin  # noqa: E402
 from src.metrics.nowcast import persistence_forecast  # noqa: E402
 from src.models.diffusion.edm import EDMDiffusion  # noqa: E402
 from src.utils.checkpoints import load_diffusion_lit, load_stvae_weights  # noqa: E402
@@ -124,6 +125,7 @@ def _per_sample_metrics(pred_k: np.ndarray, true_k: np.ndarray, threshold_K: flo
     return {
         "MAE_K": float(np.abs(pred_k - true_k).mean()),
         "RMSE_K": float(((pred_k - true_k) ** 2).mean() ** 0.5),
+        "GRAD_MAE_B13_K": gradient_mae_b13_kelvin(pred_k, true_k),
         f"CSI_{int(threshold_K)}K_mean": float(np.mean(csis)),
         f"CSI_{int(threshold_K)}K_min": float(np.min(csis)),
         f"CSI_{int(threshold_K)}K_max": float(np.max(csis)),
@@ -239,8 +241,10 @@ def main(cfg: DictConfig) -> None:
             out_path = fig_dir / f"sample_{saved:02d}.png"
             title = (
                 f"sample {saved}  (batch {batch_idx}, in-batch {b})\n"
-                f"Pred  MAE={m_pred['MAE_K']:.2f}K  CSI@{int(threshold_K)}K={m_pred[f'CSI_{int(threshold_K)}K_mean']:.3f}   |   "
-                f"Persist MAE={m_pers['MAE_K']:.2f}K  CSI@{int(threshold_K)}K={m_pers[f'CSI_{int(threshold_K)}K_mean']:.3f}"
+                f"Pred  MAE={m_pred['MAE_K']:.2f}K  GRAD={m_pred['GRAD_MAE_B13_K']:.3f}  "
+                f"CSI@{int(threshold_K)}K={m_pred[f'CSI_{int(threshold_K)}K_mean']:.3f}   |   "
+                f"Persist MAE={m_pers['MAE_K']:.2f}K  GRAD={m_pers['GRAD_MAE_B13_K']:.3f}  "
+                f"CSI@{int(threshold_K)}K={m_pers[f'CSI_{int(threshold_K)}K_mean']:.3f}"
             )
             _save_grid(
                 out_path,
@@ -264,7 +268,8 @@ def main(cfg: DictConfig) -> None:
                 f"  [{saved:02d}] PNG={out_path.name}  "
                 f"pred_CSI={m_pred[f'CSI_{int(threshold_K)}K_mean']:.3f}  "
                 f"persist_CSI={m_pers[f'CSI_{int(threshold_K)}K_mean']:.3f}  "
-                f"pred_MAE_K={m_pred['MAE_K']:.2f}  persist_MAE_K={m_pers['MAE_K']:.2f}"
+                f"pred_MAE_K={m_pred['MAE_K']:.2f}  pred_GRAD={m_pred['GRAD_MAE_B13_K']:.3f}  "
+                f"persist_MAE_K={m_pers['MAE_K']:.2f}  persist_GRAD={m_pers['GRAD_MAE_B13_K']:.3f}"
             )
             saved += 1
 

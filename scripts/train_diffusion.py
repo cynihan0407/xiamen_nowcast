@@ -137,6 +137,14 @@ def main(cfg: DictConfig) -> None:
         flow_max_disp=int(OmegaConf.select(cfg, "train.flow_max_disp", default=6)),
         flow_win=int(OmegaConf.select(cfg, "train.flow_win", default=9)),
         flow_scale=int(OmegaConf.select(cfg, "train.flow_scale", default=4)),
+        image_loss_enable=bool(OmegaConf.select(cfg, "train.image_loss_enable", default=False)),
+        image_l1_weight=float(OmegaConf.select(cfg, "train.image_l1_weight", default=0.02)),
+        image_grad_weight=float(OmegaConf.select(cfg, "train.image_grad_weight", default=0.05)),
+        image_dice_weight=float(OmegaConf.select(cfg, "train.image_dice_weight", default=0.05)),
+        image_dice_thresholds_K=tuple(
+            float(t) for t in OmegaConf.select(cfg, "train.image_dice_thresholds_K", default=[240.0, 220.0])
+        ),
+        image_dice_tau=float(OmegaConf.select(cfg, "train.image_dice_tau", default=0.02)),
     )
 
     # 3) Trainer

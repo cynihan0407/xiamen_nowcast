@@ -8,6 +8,7 @@ import torch
 
 from src.data.normalizers import norm_to_kelvin_np
 from src.metrics.csi import binary_csi, csi_at_threshold_k
+from src.metrics.grad_metrics import gradient_mae_b13_kelvin_sum
 
 
 @dataclass
@@ -46,6 +47,8 @@ class NowcastMetricState:
     n_samples: int = 0
     sum_abs_err_k: float = 0.0
     sum_sq_err_k: float = 0.0
+    sum_grad_mae_k: float = 0.0
+    n_grad_elems: int = 0
     n_pixels: int = 0
     csi_global: dict[float, CSIAccumulator] = field(default_factory=dict)
     csi_per_sample: dict[float, list[float]] = field(default_factory=dict)
@@ -79,6 +82,9 @@ def update_nowcast_metrics(
     diff = pred_k - true_k
     state.sum_abs_err_k += float(np.abs(diff).sum())
     state.sum_sq_err_k += float((diff**2).sum())
+    gs, gn = gradient_mae_b13_kelvin_sum(pred_k, true_k)
+    state.sum_grad_mae_k += gs
+    state.n_grad_elems += gn
     state.n_pixels += int(B * T * H * W)
 
     for thr in thresholds_k:
@@ -99,6 +105,7 @@ def finalize_nowcast_metrics(state: NowcastMetricState) -> dict[str, float]:
     if state.n_pixels > 0:
         out["MAE_B13_K"] = state.sum_abs_err_k / state.n_pixels
         out["RMSE_B13_K"] = (state.sum_sq_err_k / state.n_pixels) ** 0.5
+        out["GRAD_MAE_B13_K"] = state.sum_grad_mae_k / max(state.n_grad_elems, 1)
     for thr, acc in state.csi_global.items():
         m = acc.to_dict()
         tag = int(thr) if thr == int(thr) else thr

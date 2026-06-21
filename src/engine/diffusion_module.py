@@ -27,7 +27,9 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 
 from src.data.normalizers import b13_norm_threshold_for_kelvin, norm_to_kelvin_np
 from src.metrics.csi import csi_at_threshold_k
+from src.metrics.grad_metrics import gradient_mae_b13_kelvin
 from src.models.diffusion.edm import EDMDiffusion
+from src.models.diffusion.image_losses import diffusion_image_aux_loss
 from src.models.vae.stvae import STVAE
 
 
@@ -118,6 +120,12 @@ class DiffusionLightningModule(LightningModule):
         flow_max_disp: int = 6,
         flow_win: int = 9,
         flow_scale: int = 4,
+        image_loss_enable: bool = False,
+        image_l1_weight: float = 0.02,
+        image_grad_weight: float = 0.05,
+        image_dice_weight: float = 0.05,
+        image_dice_thresholds_K: tuple[float, ...] = (240.0, 220.0),
+        image_dice_tau: float = 0.02,
     ) -> None:
         super().__init__()
         self.save_hyperparameters(ignore=["diffusion", "stvae"])
@@ -152,6 +160,14 @@ class DiffusionLightningModule(LightningModule):
         self.flow_win = int(flow_win)
         self.flow_scale = int(flow_scale)
 
+        # 图像空间 B13 辅助损失（梯度清晰度 + soft-Dice），梯度经 STVAE 解码器回传到 denoiser
+        self.image_loss_enable = bool(image_loss_enable)
+        self.image_l1_weight = float(image_l1_weight)
+        self.image_grad_weight = float(image_grad_weight)
+        self.image_dice_weight = float(image_dice_weight)
+        self.image_dice_thresholds_K = tuple(float(t) for t in image_dice_thresholds_K)
+        self.image_dice_tau = float(image_dice_tau)
+
         self.ema: Optional[EMAState] = None
         self._ema_decay = ema_decay
         self._ema_enable = ema_enable
@@ -169,6 +185,15 @@ class DiffusionLightningModule(LightningModule):
 
     @torch.no_grad()
     def decode_seq(self, z: torch.Tensor) -> torch.Tensor:
+        was_training = self.stvae.training
+        self.stvae.eval()
+        out = self.stvae.decode(z)
+        if was_training:
+            self.stvae.train()
+        return out
+
+    def decode_seq_grad(self, z: torch.Tensor) -> torch.Tensor:
+        """可反传解码（STVAE 权重冻结，梯度只回传到 ``z`` / denoiser）。"""
         was_training = self.stvae.training
         self.stvae.eval()
         out = self.stvae.decode(z)
@@ -284,7 +309,32 @@ class DiffusionLightningModule(LightningModule):
 
         anchor = self._compute_anchor(z_past, past, z_future.size(2))
         target = z_future if anchor is None else z_future - anchor
-        loss, logs = self.diffusion.compute_loss(target, cond, weights=weights)
+        need_denoised = self.image_loss_enable and (
+            self.image_l1_weight > 0 or self.image_grad_weight > 0 or self.image_dice_weight > 0
+        )
+        if need_denoised:
+            loss, logs, d_pred = self.diffusion.compute_loss(
+                target, cond, weights=weights, return_denoised=True
+            )
+        else:
+            loss, logs = self.diffusion.compute_loss(target, cond, weights=weights)
+
+        if need_denoised:
+            z_pred = d_pred if anchor is None else d_pred + anchor
+            recon = self.decode_seq_grad(z_pred)
+            img_loss, img_logs = diffusion_image_aux_loss(
+                recon,
+                future,
+                l1_weight=self.image_l1_weight,
+                grad_weight=self.image_grad_weight,
+                dice_weight=self.image_dice_weight,
+                dice_thresholds_K=self.image_dice_thresholds_K,
+                dice_tau=self.image_dice_tau,
+            )
+            loss = loss + img_loss
+            logs.update(img_logs)
+            self.log("train/img_loss", img_loss, on_step=True, on_epoch=True, batch_size=B)
+
         self.log("train/loss", loss, prog_bar=True, on_step=True, on_epoch=True, batch_size=B)
         if weights is not None:
             self.log("train/cold_frac", float(weights.gt(1.0).float().mean()),
@@ -365,6 +415,8 @@ class DiffusionLightningModule(LightningModule):
         self.log("val/far_b13_240K", float(m["FAR"]), on_epoch=True, batch_size=B)
         mae_K = float(((pred_k - true_k) ** 2).mean() ** 0.5)
         self.log("val/rmse_b13_K", mae_K, on_epoch=True, batch_size=B)
+        grad_mae_K = gradient_mae_b13_kelvin(pred_k, true_k)
+        self.log("val/grad_mae_b13_K", grad_mae_K, prog_bar=True, on_epoch=True, batch_size=B)
 
     # ------------------------------------------------------------------ checkpoint EMA 持久化
     def on_save_checkpoint(self, checkpoint: dict) -> None:

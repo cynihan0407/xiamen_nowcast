@@ -34,6 +34,15 @@ flow_max_disp: 6      # 降采样分辨率下最大搜索位移
 flow_win: 9           # 局部 SSD 聚合窗口（奇数）
 flow_scale: 4         # 光流估计降采样倍率（256 -> 64）
 
+# 图像空间 B13 辅助损失（清晰度 / 边缘 / 冷云结构）
+# 在 EDM 单步去噪预测解码后加 L1 + 梯度 MAE + soft-Dice，梯度回传到 denoiser
+image_loss_enable: false
+image_l1_weight: 0.02
+image_grad_weight: 0.05
+image_dice_weight: 0.05
+image_dice_thresholds_K: [240.0, 220.0]
+image_dice_tau: 0.02
+
 # Lightning Trainer
 trainer:
   max_epochs: ${train.epochs}

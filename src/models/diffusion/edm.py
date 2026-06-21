@@ -112,16 +112,18 @@ class EDMDiffusion(nn.Module):
         cond: Optional[torch.Tensor] = None,
         *,
         weights: Optional[torch.Tensor] = None,
-    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        return_denoised: bool = False,
+    ) -> tuple[torch.Tensor, dict[str, torch.Tensor]] | tuple[torch.Tensor, dict[str, torch.Tensor], torch.Tensor]:
         """EDM 训练损失：MSE 加权，目标为干净 latent ``x_clean``。
 
         Args:
             x_clean: ``[B, C, ...]`` 干净 latent
             cond:    任意条件张量（通常为过去 latent，形状由网络决定）
             weights: 像素级 / 通道级权重（可选）
+            return_denoised: 若 True，额外返回单步去噪预测 ``d_pred``（供图像辅助损失反传）
 
         Returns:
-            (loss_scalar, log_dict)
+            (loss_scalar, log_dict) 或 (loss_scalar, log_dict, d_pred)
         """
         B = x_clean.size(0)
         sigma = self.sample_sigma_training(B, x_clean.device, x_clean.dtype)
@@ -139,6 +141,8 @@ class EDMDiffusion(nn.Module):
             "train/sigma_mean": sigma.mean().detach(),
             "train/loss_weight_mean": lam.mean().detach(),
         }
+        if return_denoised:
+            return loss, logs, d_pred
         return loss, logs
 
     # ------------------------------------------------------------------ sampling
